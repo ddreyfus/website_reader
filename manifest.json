@@ -3,7 +3,7 @@
   "name": "Website Reader",
   "version": "0.1.0",
   "description": "Collect a publication issue into a single Markdown file.",
-  "permissions": ["downloads", "scripting", "storage", "tabs"],
+  "permissions": ["clipboardWrite", "downloads", "scripting", "storage", "tabs"],
   "host_permissions": ["https://www.economist.com/*"],
   "background": {
     "service_worker": "background.js"

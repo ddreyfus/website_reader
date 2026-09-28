@@ -1,5 +1,6 @@
 const collectButton = document.querySelector("#collect");
 const continueButton = document.querySelector("#continue");
+const copyButton = document.querySelector("#copy");
 const downloadLogButton = document.querySelector("#download-log");
 const status = document.querySelector("#status");
 const logOutput = document.querySelector("#log");
@@ -22,6 +23,18 @@ function setStatus(message, linkUrl = "") {
   status.append(document.createElement("br"), link);
 }
 
+function savedMarkdown(state) {
+  if (state?.markdown) return state.markdown;
+  if (state?.status !== "completed" || !state.articles?.every((article) => article.markdown)) return "";
+  const contents = state.articles
+    .map((article, index) => `- [${article.title.replace(/[\\[\]]/g, "\\$&")}](#article-${index + 1})`)
+    .join("\n");
+  const articles = state.articles
+    .map((article, index) => `<a id="article-${index + 1}"></a>\n\n${article.markdown}`)
+    .join("\n\n---\n\n");
+  return `# ${state.heading}\n\nSource: ${state.sourceUrl}\n\n## Contents\n\n${contents}\n\n---\n\n${articles}\n`;
+}
+
 function renderState(state) {
   const sameEdition = state?.editionUrl === activeEditionUrl;
   const active = ["running", "paused"].includes(state?.status);
@@ -29,6 +42,7 @@ function renderState(state) {
   collectButton.disabled = active && (!sameEdition || state.status === "running");
   continueButton.disabled = !resumable;
   continueButton.hidden = !resumable;
+  copyButton.disabled = !savedMarkdown(state);
   if (state?.log?.length) {
     logOutput.textContent = state.log.join("\n");
     downloadLogButton.disabled = false;
@@ -225,6 +239,8 @@ async function collectEdition(resume, tabId) {
       return { paused: true };
     }
     state.status = "completed";
+    state.markdown = markdown;
+    state.articles.forEach((article) => { article.markdown = ""; });
     note(`Chrome accepted download ${downloadResponse.downloadId}.`);
     await saveState(`Downloaded ${state.articles.length} articles${unsupported ? `; ${unsupported} interactive unsupported` : ""}.`);
     return { completed: true };
@@ -265,6 +281,23 @@ async function runCollection(resume) {
 
 collectButton.addEventListener("click", async () => await runCollection(false));
 continueButton.addEventListener("click", async () => await runCollection(true));
+
+copyButton.addEventListener("click", async () => {
+  try {
+    const [{ collectionState }, response] = await Promise.all([
+      chrome.storage.local.get("collectionState"),
+      fetch(chrome.runtime.getURL("economist-digest-prompt.md"))
+    ]);
+    const markdown = savedMarkdown(collectionState);
+    if (!markdown) throw new Error("No completed issue is available to copy.");
+    if (!response.ok) throw new Error("The digest prompt could not be loaded.");
+    const prompt = await response.text();
+    await navigator.clipboard.writeText(`${markdown.trimEnd()}\n\n${prompt.trim()}\n`);
+    setStatus("Copied the issue and digest prompt.");
+  } catch (error) {
+    setStatus(error.message || "The issue and prompt could not be copied.");
+  }
+});
 
 downloadLogButton.addEventListener("click", async () => {
   try {
