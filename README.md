@@ -1,6 +1,6 @@
 # Website Reader
 
-Website Reader is a Chrome/Chromium extension that collects an entire Economist weekly edition into one Markdown document. It uses the active Economist browser session, preserves the issue's article order, checkpoints progress, and can copy the finished issue together with a detailed digest prompt for pasting into an AI chat.
+Website Reader is a Chrome/Chromium extension that collects an entire Economist weekly edition into one Markdown document. It uses the active Economist browser session, preserves the issue's article order, checkpoints progress, and can copy a detailed digest prompt for pasting into an AI chat after the Markdown is uploaded.
 
 ## Capabilities
 
@@ -15,7 +15,7 @@ Website Reader is a Chrome/Chromium extension that collects an entire Economist 
 - Resumes a paused collection from its saved position after the problem is resolved.
 - Downloads and displays the latest detailed collection log.
 - Tracks completed and interrupted extension downloads; it cleans up partial files and removes failed downloads from Chrome's history when possible.
-- Copies a completed issue followed by the bundled Economist digest prompt, ready to paste into an AI chat interface.
+- Copies the bundled Economist digest prompt, ready to paste into an AI chat after manually uploading the generated Markdown.
 
 Website Reader currently supports weekly-edition pages under `https://www.economist.com/weeklyedition/`.
 
@@ -49,17 +49,15 @@ Collection pauses if an article still fails after all retries, a browser challen
 
 A saved collection is tied to its original edition URL and cannot be resumed from a different issue. If the completed issue's download fails, **Continue collection** retries the download without recollecting successful articles.
 
-## Copy an issue for AI analysis
+## Analyze an issue with AI
 
-After an issue has completed, select **Copy issue and digest prompt**. The clipboard receives:
+After collection finishes:
 
-1. The complete generated issue Markdown.
-2. A blank-line separator.
-3. The instructions from [`economist-digest-prompt.md`](economist-digest-prompt.md).
+1. Upload the generated `economist-YYYY-MM-DD.md` file to the AI chat interface.
+2. Select **Copy digest prompt** in Website Reader.
+3. Paste the prompt into the chat and submit it with the uploaded Markdown.
 
-Paste the result into an AI chat interface. The prompt asks the AI to process the issue sequentially, summarize each article using only that article as evidence, distinguish claims from evidence, and identify articles worth closer reading.
-
-The Copy button also supports completed issues saved by an earlier extension version, provided their article Markdown remains in extension storage.
+The Copy button places only the instructions from [`economist-digest-prompt.md`](economist-digest-prompt.md) on the clipboard; it does not copy the issue or create another file. The prompt asks the AI to process the uploaded issue sequentially, summarize each article using only that article as evidence, distinguish claims from evidence, and identify articles worth closer reading.
 
 ## View or download the log
 
@@ -78,7 +76,7 @@ The log records cataloging, request timing, response status, extraction results,
 
 ## Local data and permissions
 
-Website Reader does not send collected content to an external service. Article content, progress, and logs remain in Chrome's local extension storage until replaced or removed through browser extension-data controls. Generated issues and logs are written through Chrome's download system; issue-and-prompt text is written to the clipboard only when **Copy issue and digest prompt** is selected.
+Website Reader does not send collected content to an external service. Article content, progress, and logs remain in Chrome's local extension storage until replaced or removed through browser extension-data controls. Generated issues and logs are written through Chrome's download system; only the digest prompt is written to the clipboard when **Copy digest prompt** is selected.
 
 The extension requests:
 
@@ -86,7 +84,7 @@ The extension requests:
 - `tabs` and `scripting` to verify the active edition tab and run collection in that tab.
 - `storage` to checkpoint resumable progress and retain the latest log and completed issue.
 - `downloads` to save Markdown and log files and clean up interrupted extension downloads.
-- `clipboardWrite` to copy the completed issue and digest prompt on request.
+- `clipboardWrite` to copy the digest prompt on request.
 
 ## Troubleshooting
 
@@ -94,5 +92,5 @@ The extension requests:
 - **An article cannot be accessed:** Confirm that the Economist tab is signed in and that the account has access to the article.
 - **Collection pauses on a challenge:** Use **Open challenge**, complete it, return to the same edition page, and select **Continue collection**.
 - **Collection pauses after retries:** Try the original article in the browser, resolve any access or network problem, and then select **Continue collection**.
-- **Copy is disabled:** Collection must be completed and its assembled Markdown—or the article Markdown from an earlier version—must still exist in extension storage.
+- **The copied text does not include the issue:** This is intentional. Upload the downloaded Markdown to the AI chat separately, then paste the copied digest prompt.
 - **Recent code changes do not appear:** Reload the unpacked extension from `chrome://extensions`, then reopen its popup.

@@ -56,13 +56,18 @@ Do not assume a claim is established merely because the article states it confid
 Pay particular attention to:
 
 - causal claims supported only by correlations;
+- plausible counterfactuals or alternative causal explanations that the article does not test;
+- critical assumptions on which the conclusion depends but which the article leaves untested;
+- ideological, institutional, selection, or framing bias substituting for analysis or determining which evidence is considered;
 - projections presented as conclusions;
 - anecdotes standing in for broader evidence;
+- cherry-picked cases, time periods, comparisons, or benchmarks, including neglected base rates;
 - evidence that establishes direction but not magnitude;
 - claims whose strongest evidence is omitted;
+- claims framed so vaguely or flexibly that contrary evidence could not meaningfully disconfirm them;
 - conclusions substantially stronger than the evidence presented.
 
-If the evidence adequately supports the conclusion, simply say so or summarize it without inventing a “weak point.”
+When one of these issues is material, identify it and explain briefly how it limits the conclusion. Distinguish a genuinely plausible alternative explanation from a merely imaginable one, and identify bias only when the article's framing or use of evidence supports that assessment. If the evidence adequately supports the conclusion, simply say so or summarize it without inventing a “weak point.”
 
 ## Source discipline
 
