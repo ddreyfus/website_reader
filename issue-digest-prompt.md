@@ -1,4 +1,4 @@
-Read the uploaded Economist issue and produce a concise issue digest.
+Read the uploaded {{publication}} issue and produce a concise issue digest.
 
 The purpose is to tell me what each article says, what it actually establishes, and which articles may warrant closer reading.
 
@@ -31,9 +31,9 @@ Use the shortest summary that adequately captures the article. **Two sentences o
 For every summary, identify the article's **question → conclusion → evidence that establishes it → important residual uncertainty**. Keep this sequence explicit but compact; if an element is absent, say so rather than supplying it from outside the article. For straightforward reporting, the “question” may be the event or development being reported, and the sequence may fit in one sentence.
 
 - **News/reporting:** Usually one sentence. State what happened and, where important, why it matters. Use two sentences only when necessary.
-- **The World This Week:** Treat Politics and Business as collections of discrete news items. Summarize each item in one sentence unless a second sentence is necessary.
+{{publicationSpecificNewsGuidance}}
 - **Analysis, features, science and economics:** Up to five sentences when the argument genuinely requires it. Identify the central claim or conclusion, reasoning, strongest evidence, and important qualifications or uncertainty.
-- **Leaders, columns and opinion:** Up to five sentences. Clearly distinguish the article's claim from the evidence offered for it. Identify significant assumptions, missing evidence, acknowledged counterevidence, or material gaps between evidence and conclusion.
+{{publicationSpecificOpinionGuidance}}
 - **Letters:** Skip unless they contain a substantive argument or evidence worth noting.
 - **Unsupported or missing articles:** Identify them as unavailable. Do not infer their contents from titles, related articles, general knowledge, or other material in the issue.
 

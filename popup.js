@@ -7,6 +7,29 @@ const logOutput = document.querySelector("#log");
 
 let activeEditionUrl = "";
 
+function isIssueUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return (parsed.hostname === "www.economist.com" && /^\/weeklyedition\/[^/]+\/?$/.test(parsed.pathname))
+      || (parsed.hostname === "alumni.berkeley.edu" && /^\/issue\/[^/]+\/?$/.test(parsed.pathname))
+      || (parsed.hostname === "cacm.acm.org" && /^\/issue\/[^/]+\/?$/.test(parsed.pathname));
+  } catch {
+    return false;
+  }
+}
+
+function publicationName(url) {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, "");
+    if (hostname === "economist.com") return "The Economist";
+    if (hostname === "alumni.berkeley.edu") return "California Magazine";
+    if (hostname === "cacm.acm.org") return "Communications of the ACM";
+    return hostname || "this publication";
+  } catch {
+    return "this publication";
+  }
+}
+
 function editionUrl(url) {
   const parsed = new URL(url);
   return `${parsed.origin}${parsed.pathname}`;
@@ -27,7 +50,7 @@ function renderState(state) {
   const sameEdition = state?.editionUrl === activeEditionUrl;
   const active = ["running", "paused"].includes(state?.status);
   const resumable = sameEdition && state.status === "paused";
-  collectButton.disabled = active && (!sameEdition || state.status === "running");
+  collectButton.disabled = !activeEditionUrl || (active && (!sameEdition || state.status === "running"));
   continueButton.disabled = !resumable;
   continueButton.hidden = !resumable;
   if (state?.log?.length) {
@@ -35,7 +58,7 @@ function renderState(state) {
     downloadLogButton.disabled = false;
   }
   if (sameEdition && state.statusMessage) setStatus(state.statusMessage, state.challengeUrl);
-  else if (active) setStatus(`A collection is ${state.status} for ${state.editionUrl}. Open that edition before starting another issue.`);
+  else if (active) setStatus(`A collection is ${state.status} for ${state.editionUrl}. Open that issue before starting another one.`);
 }
 
 async function download(content, filename, mimeType) {
@@ -51,7 +74,7 @@ async function collectEdition(resume, tabId) {
 
   try {
     const articleTimeoutMs = 30000;
-    const minimumArticleCharacters = 1500;
+    const minimumArticleCharacters = location.hostname === "www.economist.com" ? 1500 : 400;
     const retryDelaysMs = [5000, 10000, 20000, 40000];
     const currentEditionUrl = `${location.origin}${location.pathname}`;
     const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -78,7 +101,7 @@ async function collectEdition(resume, tabId) {
     function isChallengePage(html) {
       const page = new DOMParser().parseFromString(html, "text/html");
       const heading = `${page.title} ${page.querySelector("h1")?.textContent || ""}`;
-      return /(?:verify (?:that )?you are human|unusual traffic|just a moment)/i.test(heading)
+      return /(?:verify (?:that )?you are human|unusual traffic|just a moment|attention required|access denied)/i.test(heading)
         || page.querySelector('#challenge-form, form[action*="captcha" i], iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], script[src*="/cdn-cgi/challenge-platform/" i]');
     }
 
@@ -110,37 +133,48 @@ async function collectEdition(resume, tabId) {
         : { markdown, unsupported: false };
     }
 
-    if (location.hostname !== "www.economist.com" || !location.pathname.startsWith("/weeklyedition/")) {
-      return { error: "Open an Economist weekly edition page first." };
+    const issue = location.pathname.split("/").filter(Boolean).at(-1);
+    const economist = location.hostname === "www.economist.com" && location.pathname.startsWith("/weeklyedition/");
+    const california = location.hostname === "alumni.berkeley.edu" && location.pathname.startsWith("/issue/");
+    const cacm = location.hostname === "cacm.acm.org" && location.pathname.startsWith("/issue/");
+    if (!issue || (!economist && !california && !cacm)) {
+      return { error: "Open a supported publication issue page first." };
     }
 
     if (resume) {
       ({ collectionState: state } = await chrome.storage.local.get("collectionState"));
-      if (!state || state.editionUrl !== currentEditionUrl) return { error: "There is no saved collection for this edition." };
-      if (state.status === "completed") return { error: "This edition has already been collected." };
+      if (!state || state.editionUrl !== currentEditionUrl) return { error: "There is no saved collection for this issue." };
+      if (state.status === "completed") return { error: "This issue has already been collected." };
       state.status = "running";
       state.challengeUrl = "";
       state.tabId = tabId;
       note(`Continuing ${state.editionUrl} at article ${state.currentIndex + 1} of ${state.articles.length}.`);
       await saveState(`Continuing article ${state.currentIndex + 1} of ${state.articles.length}…`);
     } else {
-      const ignoredPaths = [
-        "/weeklyedition/", "/search", "/login", "/subscribe", "/account",
-        "/audio", "/podcasts", "/newsletters", "/events", "/the-world-in-brief"
-      ];
       const links = [...document.querySelectorAll("main a[href]")]
         .map((anchor) => ({ url: new URL(anchor.href, location.href).href, title: anchor.textContent.trim() }))
-        .filter(({ url, title }) => new URL(url).origin === location.origin && title.length > 10)
-        .filter(({ url }) => !ignoredPaths.some((path) => new URL(url).pathname.startsWith(path)))
+        .filter(({ url, title }) => new URL(url).origin === location.origin && title.length > 2)
+        .filter(({ url, title }) => {
+          const pathname = new URL(url).pathname;
+          if (california) return pathname.startsWith(`/california-magazine/${issue}/`) && pathname !== `/california-magazine/${issue}/`;
+          if (cacm) return !/^(?:learn|read) more$/i.test(title)
+            && /^\/(?:research|opinion|practice|news|research-highlights|careers)\/[^/]+\/?$/.test(pathname);
+          const ignoredPaths = [
+            "/weeklyedition/", "/search", "/login", "/subscribe", "/account",
+            "/audio", "/podcasts", "/newsletters", "/events", "/the-world-in-brief"
+          ];
+          return title.length > 10 && !ignoredPaths.some((path) => pathname.startsWith(path));
+        })
         .filter(({ url }) => !/\.(?:jpg|jpeg|png|gif|svg|webp|pdf)$/i.test(new URL(url).pathname));
       const articles = [...new Map(links.map((article) => [new URL(article.url).pathname, article])).values()]
         .map((article) => ({ ...article, markdown: "", unsupported: false }));
-      if (!articles.length) return { error: "No article links were found on this edition page." };
-      const issue = location.pathname.split("/").filter(Boolean).at(-1);
+      if (!articles.length) return { error: "No article links were found on this issue page." };
+      const publication = economist ? "The Economist" : california ? "California Magazine" : "Communications of the ACM";
+      const filenamePublication = economist ? "economist" : california ? "california-magazine" : "cacm";
       state = {
         editionUrl: currentEditionUrl,
-        filename: `economist-${issue}.md`,
-        heading: document.querySelector("h1")?.textContent.trim() || `The Economist — ${issue}`,
+        filename: `${filenamePublication}-${issue}.md`,
+        heading: document.querySelector("h1")?.textContent.trim() || `${publication} — ${issue}`,
         sourceUrl: location.href,
         status: "running",
         statusMessage: "",
@@ -191,13 +225,15 @@ async function collectEdition(resume, tabId) {
             state.status = "paused";
             state.challengeUrl = article.url;
             note(`PAUSED ${article.url}: ${reason}`);
-            await saveState(`Challenge detected for “${article.title}”. Complete it, return to this edition, then continue collection.`);
+            await saveState(`Challenge detected for “${article.title}”. Complete it, return to this issue, then continue collection.`);
             return { paused: true };
           }
-          if (attempt === retryDelaysMs.length) {
+          const nonRetryable = response?.status >= 400 && response.status < 500
+            && ![408, 429].includes(response.status);
+          if (nonRetryable || attempt === retryDelaysMs.length) {
             state.status = "paused";
-            note(`PAUSED ${article.url} after retries: ${reason}`);
-            await saveState(`Could not collect “${article.title}” after retries. Continue collection to retry it.`);
+            note(`PAUSED ${article.url}${nonRetryable ? " without retry" : " after retries"}: ${reason}`);
+            await saveState(`Could not collect “${article.title}”${nonRetryable ? "" : " after retries"}. Continue collection to retry it.`);
             return { paused: true };
           }
           const delayMs = Math.max(retryDelaysMs[attempt], response?.status === 429 ? retryAfterMs(response) : 0);
@@ -222,7 +258,7 @@ async function collectEdition(resume, tabId) {
     if (!downloadResponse?.ok) {
       state.status = "paused";
       note(`Download failed: ${downloadResponse?.error || "Chrome did not start the download."}`);
-      await saveState("The edition is complete, but its download failed. Continue collection to retry the download.");
+      await saveState("The issue is complete, but its download failed. Continue collection to retry the download.");
       return { paused: true };
     }
     state.status = "completed";
@@ -249,16 +285,16 @@ async function runCollection(resume) {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error("Chrome did not return an active tab.");
-    const currentEdition = tab.url?.startsWith("https://www.economist.com/weeklyedition/") ? editionUrl(tab.url) : "";
-    if (!currentEdition) throw new Error("Open an Economist weekly edition page first.");
+    const currentEdition = isIssueUrl(tab.url) ? editionUrl(tab.url) : "";
+    if (!currentEdition) throw new Error("Open a supported publication issue page first.");
     const { collectionState } = await chrome.storage.local.get("collectionState");
     if (!resume && ["running", "paused"].includes(collectionState?.status) && collectionState.editionUrl !== currentEdition) {
-      throw new Error(`A collection is ${collectionState.status} for ${collectionState.editionUrl}. Open that edition before starting another issue.`);
+      throw new Error(`A collection is ${collectionState.status} for ${collectionState.editionUrl}. Open that issue before starting another one.`);
     }
     const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectEdition, args: [resume, tab.id] });
     if (result?.error) throw new Error(result.error);
   } catch (error) {
-    setStatus(error.message || "The edition could not be collected.");
+    setStatus(error.message || "The issue could not be collected.");
   } finally {
     await loadState();
   }
@@ -269,11 +305,22 @@ continueButton.addEventListener("click", async () => await runCollection(true));
 
 copyButton.addEventListener("click", async () => {
   try {
-    const response = await fetch(chrome.runtime.getURL("economist-digest-prompt.md"));
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const publication = publicationName(tab?.url || "");
+    const newsGuidance = publication === "The Economist"
+      ? "- **The World This Week:** Treat Politics and Business as collections of discrete news items. Summarize each item in one sentence unless a second sentence is necessary."
+      : "- **News roundups:** Treat each roundup as a collection of discrete news items. Summarize each item in one sentence unless a second sentence is necessary.";
+    const opinionGuidance = publication === "The Economist"
+      ? "- **Leaders, columns and opinion:** Up to five sentences. Clearly distinguish the article's claim from the evidence offered for it. Identify significant assumptions, missing evidence, acknowledged counterevidence, or material gaps between evidence and conclusion."
+      : "- **Editorials, columns and opinion:** Up to five sentences. Clearly distinguish the article's claim from the evidence offered for it. Identify significant assumptions, missing evidence, acknowledged counterevidence, or material gaps between evidence and conclusion.";
+    const response = await fetch(chrome.runtime.getURL("issue-digest-prompt.md"));
     if (!response.ok) throw new Error("The digest prompt could not be loaded.");
-    const prompt = await response.text();
+    const prompt = (await response.text())
+      .replaceAll("{{publication}}", publication === "The Economist" ? "Economist" : publication)
+      .replace("{{publicationSpecificNewsGuidance}}", newsGuidance)
+      .replace("{{publicationSpecificOpinionGuidance}}", opinionGuidance);
     await navigator.clipboard.writeText(`${prompt.trim()}\n`);
-    setStatus("Copied the digest prompt. Upload the issue Markdown separately.");
+    setStatus(`Copied the ${publication} digest prompt. Upload the issue Markdown separately.`);
   } catch (error) {
     setStatus(error.message || "The digest prompt could not be copied.");
   }
@@ -293,7 +340,14 @@ downloadLogButton.addEventListener("click", async () => {
 async function loadState() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    activeEditionUrl = tab?.url?.startsWith("https://www.economist.com/weeklyedition/") ? editionUrl(tab.url) : "";
+    activeEditionUrl = isIssueUrl(tab?.url) ? editionUrl(tab.url) : "";
+    const publication = publicationName(tab?.url || "");
+    copyButton.textContent = `Copy ${publication} digest prompt`;
+    collectButton.textContent = `Collect ${publication} issue`;
+    collectButton.disabled = !activeEditionUrl;
+    if (!activeEditionUrl) {
+      setStatus(`Copy an issue digest prompt for ${publication}. To collect an issue, open its issue page on The Economist, California Magazine, or Communications of the ACM.`);
+    }
     const { collectionState, latestLog = "" } = await chrome.storage.local.get(["collectionState", "latestLog"]);
     if (latestLog) {
       logOutput.textContent = latestLog;

@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "description": "Collect a publication issue into a single Markdown file.",
   "permissions": ["clipboardWrite", "downloads", "scripting", "storage", "tabs"],
-  "host_permissions": ["https://www.economist.com/*"],
+  "host_permissions": [
+    "https://www.economist.com/*",
+    "https://alumni.berkeley.edu/*",
+    "https://cacm.acm.org/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
