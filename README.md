@@ -1,5 +1,11 @@
 # Website Reader
 
+For **The Free Press** emails, only Free Press article pages (`thefp.com/p/…`) are collected. Direct external links are excluded; Substack tracking redirects are checked and discarded if they lead outside Free Press. External citations remain in the original email text.
+
+Newsletter collection follows only the selected email's article candidates. It never adds links discovered on opened pages. Author profiles, app actions, empty decorative-image links, and podcast utility links are excluded. Redirects that land on homepages, navigation, or media are discarded before extraction or a site-access request.
+
+Website Reader opens beside the page in Chrome's side panel and stays open across article tabs and site-access prompts. Use **Close** to dismiss it and the extension icon to reopen it. Chrome 141 or later is required. **Continue collection** and **Skip article** act on the saved source batch even while its article tab is selected. Maps, address links, and footer utility links remain in the original email text but are not opened as articles.
+
 Website Reader is a Chrome/Chromium extension that collects an entire publication issue into one Markdown document. It uses the active browser session, preserves the issue's article order, checkpoints progress, and can copy a publication-targeted digest prompt after the issue is uploaded to an AI chat.
 
 ## Capabilities
@@ -23,6 +29,7 @@ Website Reader supports all issue pages under:
 - `https://alumni.berkeley.edu/issue/`
 - `https://cacm.acm.org/issue/`
 - `https://www.nytimes.com/` (homepage article links, using your signed-in session)
+- `https://mail.google.com/` (an expanded email and its linked articles)
 
 ## Install locally
 
@@ -62,6 +69,22 @@ The popup reports the current article, its position in the issue, the current at
 
 For The New York Times, the collector snapshots the dated article links currently present on the homepage, removes duplicate and tracking links, and names the file `nyt-YYYY-MM-DD.md` using the collection date in New York. Section navigation and games are excluded. Sign in before collecting; the collector uses that browser session.
 
+## Collect a newsletter in Gmail
+
+1. Open the email in Gmail and expand its message body.
+2. Open Website Reader. If several messages are expanded, select one in **Expanded email**.
+3. Select **Collect email and articles**. Chrome asks for access to the linked sites. Articles open one at a time in background tabs and are read after their text renders.
+4. If a redirect needs site access or a page needs login or a challenge, collection pauses and leaves the article tab open. Complete login in that tab, return to the original Gmail message, and select **Continue collection**. Chrome requests access to a redirected site at that point. Medium access includes its subdomains so author-hosted stories do not each require a separate grant. If the article remains inaccessible, select **Skip article**.
+5. Successful article tabs close automatically. Skipping also closes the article tab.
+6. Leave the Gmail tab on that conversation while collection runs. You can close the popup.
+7. Save the Markdown, upload it to your AI chat, and use **Copy email digest prompt**.
+
+Gmail filenames use `newsletter-<sending-domain>-<message-id>.md`. The file preserves the email's subject, sender, displayed date, commentary, excerpts, and HTTP/HTTPS links. Linked articles follow in email order, with duplicate links removed. Routine subscription, account, sharing, advertising, navigation, and non-HTML file links are kept in the email text but excluded from article fetching. Link classification is heuristic. Medium links must identify a story; author profiles and publication landing pages remain in the email but are not fetched. Medium tracking parameters are removed to avoid collecting the same story repeatedly. A failed page load pauses collection with its article tab available for inspection; Continue retries, while Skip preserves an unavailable entry and moves on. Failed articles retain an unavailable entry and their email link. Emails without article links also work.
+
+The email prompt uses question → claim → evidence → open questions → why this might be interesting, with a position-and-reasoning summary for opinion. It distinguishes the newsletter's claims from the linked article's evidence and permits an empty reading shortlist.
+
+Only visible, expanded message bodies are captured, not the inbox or collapsed messages. Gmail's DOM can change. Clipped emails are labeled partial; hidden content is not captured. Articles use normal browser navigation with your signed-in session and are read from the rendered page. Redirect destinations require extension access before their text can be read. Login and challenge detection is heuristic; some paywalls may expose only a preview, which is labeled when the extracted text is too short. Collection does not bypass access restrictions. Return to the original Gmail conversation and select the same message to resume an interrupted batch.
+
 ## Resume an interrupted collection
 
 Collection pauses if the collection tab is closed or navigated away, or the collection itself is interrupted. Individual article failures are logged and skipped.
@@ -89,6 +112,14 @@ The Copy button places only the instructions from [`issue-digest-prompt.md`](iss
 
 The log records cataloging, request timing, response status, extraction results, retries, skipped articles, pauses, downloads, and cleanup errors. Only the latest collection log is retained.
 
+## Open a collected batch in ChatGPT
+
+After a collection finishes, select **Open in ChatGPT**. This works from any active tab and uses the most recently completed batch, whether it came from Gmail or a supported publication. Chrome asks for optional access to `chatgpt.com` so Website Reader can attach the file.
+
+The action copies the prompt for the saved batch's source, opens a new ChatGPT web chat, and attaches the exact generated Markdown. Paste the prompt and submit when ready. It does not submit a message automatically. The original download remains available.
+
+This targets the ChatGPT website. The official ChatGPT browser extension's side chat has no cross-extension upload listener in the inspected version (1.26.901.11451), so Website Reader cannot directly attach a file inside that separate panel. If ChatGPT requires sign-in, its attachment UI changes, or access is declined, attach the downloaded file manually; the prompt is still copied. The automatic attachment rebuilds the document from the saved collection, so clearing download history does not prevent handoff.
+
 ## Output and extraction limits
 
 - Subscriber-only content is available only when the active publication session has access to it.
@@ -99,11 +130,14 @@ The log records cataloging, request timing, response status, extraction results,
 
 ## Local data and permissions
 
-Website Reader does not send collected content to an external service. Article content, progress, and logs remain in Chrome's local extension storage until replaced or removed through browser extension-data controls. Generated issues and logs are written through Chrome's download system; only the digest prompt is written to the clipboard when **Copy digest prompt** is selected.
+Collection stores content locally; selecting **Open in ChatGPT** uploads the completed batch to ChatGPT. Article content, progress, and logs remain in Chrome's local extension storage until replaced or removed through browser extension-data controls. Generated issues and logs are written through Chrome's download system; only the digest prompt is written to the clipboard when **Copy digest prompt** is selected.
 
 The extension requests:
 
 - Access to `www.economist.com`, `alumni.berkeley.edu`, `cacm.acm.org`, and `www.nytimes.com` to read issue pages and fetch their articles.
+- Access to `mail.google.com` to capture the expanded email selected in the popup. Email text is stored locally with collection progress and included in your downloaded file.
+- Optional HTTP/HTTPS host access, requested only for sites linked by the selected email, to read rendered article tabs across publications. Previously granted site access remains until removed in Chrome's extension settings. The email body is not sent to linked sites; fetching a newsletter tracking link may register a click with its sender.
+- Optional access to `chatgpt.com`, requested when you select **Open in ChatGPT**, to attach the completed batch to your ChatGPT draft. This action sends the collected content, including email content when present, to ChatGPT. Collection alone does not send it there.
 - `tabs` and `scripting` to verify the active issue tab and run collection in that tab.
 - `storage` to checkpoint resumable progress and retain the latest log and completed issue.
 - `downloads` to save Markdown and log files and clean up interrupted extension downloads.

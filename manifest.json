@@ -2,19 +2,32 @@
   "manifest_version": 3,
   "name": "Website Reader",
   "version": "0.1.0",
-  "description": "Collect a publication issue into a single Markdown file.",
-  "permissions": ["clipboardWrite", "downloads", "scripting", "storage", "tabs"],
+  "minimum_chrome_version": "141",
+  "description": "Collect publication issues or a Gmail newsletter and its linked articles into Markdown.",
+  "permissions": [
+    "clipboardWrite",
+    "downloads",
+    "scripting",
+    "sidePanel",
+    "storage",
+    "tabs"
+  ],
   "host_permissions": [
     "https://www.economist.com/*",
     "https://alumni.berkeley.edu/*",
     "https://cacm.acm.org/*",
-    "https://www.nytimes.com/*"
+    "https://www.nytimes.com/*",
+    "https://mail.google.com/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Website Reader",
-    "default_popup": "popup.html"
-  }
+    "default_title": "Website Reader"
+  },
+  "side_panel": { "default_path": "popup.html" },
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ]
 }

@@ -1,11 +1,132 @@
 const collectButton = document.querySelector("#collect");
 const continueButton = document.querySelector("#continue");
+const skipButton = document.querySelector("#skip");
+const handoffButton = document.querySelector("#handoff");
 const copyButton = document.querySelector("#copy");
 const downloadLogButton = document.querySelector("#download-log");
 const status = document.querySelector("#status");
 const logOutput = document.querySelector("#log");
 
+const emailSelect = document.querySelector("#email-message");
+const emailLabel = document.querySelector("#email-label");
+let emails = [];
 let activeEditionUrl = "";
+
+document.querySelector("#close").addEventListener("click", async () => {
+  try {
+    const window = await chrome.windows.getCurrent();
+    await chrome.sidePanel.close({ windowId: window.id });
+  } catch (error) { setStatus(`Could not close Website Reader: ${error.message || String(error)}`); }
+});
+
+async function readingBatchTab(resume = true) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const { collectionState: state } = await chrome.storage.local.get("collectionState");
+  if (resume && ["running", "paused"].includes(state?.status)) {
+    const source = await chrome.tabs.get(state.tabId);
+    if (source.windowId === tab?.windowId) return source;
+  }
+  return tab;
+}
+
+function isGmailUrl(url) {
+  try { return new URL(url).origin === "https://mail.google.com"; }
+  catch { return false; }
+}
+
+// Executed in Gmail's isolated content-script world; never read the inbox or
+// collapsed messages. The selected message is snapshotted before collection.
+function captureEmails() {
+  if (location.origin !== "https://mail.google.com") return [];
+  const main = document.querySelector('[role="main"]');
+  if (!main) return [];
+  const escape = (text) => text.replace(/[\\`*_[\]<>]/g, "\\$&");
+  function linkUrl(anchor) {
+    try {
+      let url = new URL(anchor.getAttribute("href"), location.href);
+      if (url.hostname === "www.google.com" && url.pathname === "/url") {
+        const destination = url.searchParams.get("q") || url.searchParams.get("url");
+        if (destination) url = new URL(destination);
+      }
+      if (!/^https?:$/.test(url.protocol) || url.username || url.password) return "";
+      return url.href;
+    } catch { return ""; }
+  }
+  function markdown(node) {
+    if (node.nodeType === Node.TEXT_NODE) return escape(node.textContent.replace(/\s+/g, " "));
+    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    if (node.matches("script,style,button,form,[hidden],[aria-hidden='true']") || getComputedStyle(node).display === "none") return "";
+    if (node.tagName === "BR") return "\n";
+    const text = [...node.childNodes].map(markdown).join("");
+    if (node.tagName === "A") {
+      const url = linkUrl(node);
+      return url ? `[${text.trim() || escape(url)}](<${url}>)` : text;
+    }
+    if (/^H[1-6]$/.test(node.tagName)) return `\n\n### ${text.trim()}\n\n`;
+    if (node.tagName === "LI") return `\n- ${text.trim()}\n`;
+    if (/^(P|DIV|TR|TABLE|UL|OL|BLOCKQUOTE)$/.test(node.tagName)) return `\n${text}\n`;
+    if (/^(TD|TH)$/.test(node.tagName)) return `${text} `;
+    return text;
+  }
+  return [...main.querySelectorAll(".a3s")]
+    .filter((body) => body.getClientRects().length && getComputedStyle(body).visibility !== "hidden")
+    .map((body) => {
+      const message = body.closest(".adn") || body.parentElement;
+      const identity = message.closest("[data-legacy-message-id], [data-message-id]")
+        || message.querySelector("[data-legacy-message-id], [data-message-id]");
+      const id = identity?.getAttribute("data-legacy-message-id") || identity?.getAttribute("data-message-id") || body.id;
+      if (!id) return null;
+      const subject = main.querySelector("h2.hP, h2")?.textContent.trim() || "Newsletter";
+      const sender = message.querySelector(".gD[email]");
+      const from = sender ? `${sender.textContent.trim()} <${sender.getAttribute("email")}>` : message.querySelector(".gD")?.textContent.trim() || "Unknown sender";
+      const freePress = /^The Free Press\s*</i.test(from);
+      const dateElement = message.querySelector(".g3");
+      const date = dateElement?.getAttribute("title") || dateElement?.textContent.trim() || "Unknown date";
+      const links = [...body.querySelectorAll("a[href]")]
+        .filter((anchor) => anchor.getClientRects().length && getComputedStyle(anchor).visibility !== "hidden"
+          && (anchor.textContent.trim() || anchor.querySelector("img")?.alt?.trim())
+          && !anchor.closest("footer, [role='contentinfo']"))
+        .map((anchor) => ({
+        url: linkUrl(anchor), title: anchor.textContent.replace(/\s+/g, " ").trim() || anchor.querySelector("img")?.alt || "Linked article"
+      })).filter(({ url, title }) => {
+        if (!url) return false;
+        const parsed = new URL(url);
+        if (freePress && !((parsed.hostname === "thefp.com" || parsed.hostname === "www.thefp.com")
+          && parsed.pathname.startsWith("/p/") || parsed.hostname === "substack.com" && parsed.pathname.startsWith("/redirect/"))) return false;
+        // Keep these links in the email text, but do not visit control links.
+        return parsed.hostname !== "mail.google.com"
+          && !["maps.google.com", "maps.app.goo.gl", "maps.apple.com"].includes(parsed.hostname)
+          && !(parsed.hostname === "goo.gl" && parsed.pathname.startsWith("/maps"))
+          && !((parsed.hostname === "google.com" || parsed.hostname === "www.google.com") && parsed.pathname.startsWith("/maps"))
+          && !["itunes.apple.com", "apps.apple.com"].includes(parsed.hostname)
+          && !(parsed.hostname === "play.google.com" && parsed.pathname.startsWith("/store/"))
+          && !(parsed.hostname === "substack.com" && /^\/(?:profile|app-link)(?:\/|$)/i.test(parsed.pathname))
+          && (!(parsed.hostname === "medium.com" || parsed.hostname.endsWith(".medium.com"))
+            || /\/(?:p\/[a-f0-9]{12}|[^/]+-[a-f0-9]{12})\/?$/i.test(parsed.pathname))
+          && !/(?:^|\.)(?:facebook\.com|twitter\.com|x\.com|linkedin\.com|instagram\.com)$/.test(parsed.hostname)
+          && !/^(?:unsubscribe|opt.?out|(?:manage|update|change|email) (?:your )?(?:preferences|subscription|account)|subscribe(?: now)?|sign.?in|log.?in|share(?: this| on)?|advertisement|sponsored|privacy policy|terms of|careers|help center|contact us|view (?:this )?(?:email )?in (?:your )?(?:browser|app)|get (?:the |our )?app|download (?:as a pdf|on the app store)|spotify$|apple podcasts$|rss$)(?:\b|$)/i.test(title)
+          && !/(?:^|[\/?&=])(?:unsubscribe|opt.?out|preferences|subscribe|signin|login|share|privacy|terms)(?:[\/?&=]|$)/i.test(`${parsed.pathname}${parsed.search}`)
+          && !/\.(?:jpg|jpeg|png|gif|svg|webp|pdf|zip|mp4|mp3)$/i.test(parsed.pathname)
+          && parsed.pathname !== "/";
+      });
+      links.forEach((link) => {
+        const url = new URL(link.url);
+        url.hash = "";
+        for (const key of [...url.searchParams.keys()]) {
+          if (/^(?:utm_|mc_cid$|mc_eid$)/i.test(key)
+            || key === "source" && (url.hostname === "medium.com" || url.hostname.endsWith(".medium.com"))) url.searchParams.delete(key);
+        }
+        link.url = url.href;
+      });
+      const articles = [...new Map(links.map((link) => [link.url, link])).values()];
+      return {
+        id, subject, from, date, sourceUrl: location.href,
+        editionUrl: `${location.href}::${id}`,
+        markdown: `## Original email\n\nSubject: ${escape(subject)}\n\nFrom: ${escape(from)}\n\nDate: ${escape(date)}\n\nProvenance: Email commentary and excerpts; not the linked articles' full text.\n\n${message.querySelector(".ajR") ? "> **Partial email:** Gmail has clipped this message. Expand or view the entire message to read omitted content.\n\n" : ""}${markdown(body).replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n").trim()}`,
+        articles
+      };
+    }).filter(Boolean);
+}
 
 function isIssueUrl(url) {
   try {
@@ -44,14 +165,17 @@ function setStatus(message, linkUrl = "") {
   link.href = linkUrl;
   link.target = "_blank";
   link.rel = "noreferrer";
-  link.textContent = "Open challenge";
+  link.textContent = "Open article";
   status.append(document.createElement("br"), link);
 }
 
 function renderState(state) {
+  handoffButton.disabled = state?.status !== "completed" || !Number.isInteger(state.downloadId);
   const sameEdition = state?.editionUrl === activeEditionUrl;
   const active = ["running", "paused"].includes(state?.status);
   const resumable = sameEdition && state.status === "paused";
+  skipButton.hidden = !(resumable && Number.isInteger(state.articleTabId));
+  skipButton.disabled = skipButton.hidden;
   collectButton.disabled = !activeEditionUrl || (active && (!sameEdition || state.status === "running"));
   continueButton.disabled = !resumable;
   continueButton.hidden = !resumable;
@@ -60,7 +184,7 @@ function renderState(state) {
     downloadLogButton.disabled = false;
   }
   if (sameEdition && state.statusMessage) setStatus(state.statusMessage, state.challengeUrl);
-  else if (active) setStatus(`A collection is ${state.status} for ${state.editionUrl}. Open that issue before starting another one.`);
+  else if (active) setStatus(`A collection is ${state.status} for ${state.editionUrl}. Open that reading batch before starting another one.`);
 }
 
 async function download(content, filename, mimeType) {
@@ -69,7 +193,7 @@ async function download(content, filename, mimeType) {
   return response.downloadId;
 }
 
-async function collectEdition(resume, tabId) {
+async function collectEdition(resume, tabId, email = null) {
   if (globalThis.__websiteReaderRunning) return { error: "Collection is already running in this tab." };
   globalThis.__websiteReaderRunning = true;
   let state;
@@ -77,8 +201,8 @@ async function collectEdition(resume, tabId) {
   try {
     const articleTimeoutMs = 30000;
     const minimumArticleCharacters = location.hostname === "www.economist.com" ? 1500 : 400;
-    const retryDelaysMs = [5000, 10000, 20000, 40000];
-    const currentEditionUrl = `${location.origin}${location.pathname}`;
+    const retryDelaysMs = email ? [5000] : [5000, 10000, 20000, 40000];
+    const currentEditionUrl = email?.editionUrl || `${location.origin}${location.pathname}`;
     const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
     function note(message) {
@@ -86,6 +210,7 @@ async function collectEdition(resume, tabId) {
     }
 
     async function saveState(statusMessage = state.statusMessage) {
+      if (email && location.href !== state.sourceUrl) throw new Error("The Gmail message changed. Return to the saved email to continue.");
       state.statusMessage = statusMessage;
       state.updatedAt = new Date().toISOString();
       await chrome.storage.local.set({ collectionState: state, latestLog: state.log.join("\n") });
@@ -104,7 +229,7 @@ async function collectEdition(resume, tabId) {
       const page = new DOMParser().parseFromString(html, "text/html");
       const heading = `${page.title} ${page.querySelector("h1")?.textContent || ""}`;
       return /(?:verify (?:that )?you are human|unusual traffic|just a moment|attention required|access denied)/i.test(heading)
-        || page.querySelector('#challenge-form, form[action*="captcha" i], iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], script[src*="/cdn-cgi/challenge-platform/" i]');
+        || page.querySelector('#challenge-form, form[action*="captcha" i], iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i]');
     }
 
     function markdownFromHtml(html, url) {
@@ -112,7 +237,7 @@ async function collectEdition(resume, tabId) {
       const title = page.querySelector("h1")?.textContent.trim()
         || page.querySelector('meta[property="og:title"]')?.content.trim()
         || page.title.trim();
-      const unsupportedMarkdown = () => `## ${title}\n\n[Original article](${url})\n\n> **Unsupported:** This interactive article cannot yet be extracted reliably.`;
+      const unsupportedMarkdown = (reason = "This interactive article cannot yet be extracted reliably.") => `## ${title}\n\n[Original article](${url})\n\n> **Unsupported:** ${reason}`;
       const interactive = new URL(url).pathname.includes("/interactive/")
         || page.querySelector('iframe[src*="infographics.economist.com"], [data-component*="interactive" i]');
       if (title && interactive) return { markdown: unsupportedMarkdown(), unsupported: true };
@@ -131,7 +256,7 @@ async function collectEdition(resume, tabId) {
       });
       const markdown = lines.join("\n").trim();
       return markdown.length < minimumArticleCharacters
-        ? { markdown: unsupportedMarkdown(), unsupported: true }
+        ? { markdown: unsupportedMarkdown("Too little article text was available; this may be a preview or paywall."), unsupported: true }
         : { markdown, unsupported: false };
     }
 
@@ -142,7 +267,7 @@ async function collectEdition(resume, tabId) {
     const economist = location.hostname === "www.economist.com" && location.pathname.startsWith("/weeklyedition/");
     const california = location.hostname === "alumni.berkeley.edu" && location.pathname.startsWith("/issue/");
     const cacm = location.hostname === "cacm.acm.org" && location.pathname.startsWith("/issue/");
-    if (!issue || (!economist && !california && !cacm && !nyt)) {
+    if (!email && (!issue || (!economist && !california && !cacm && !nyt))) {
       return { error: "Open a supported publication issue page first." };
     }
 
@@ -156,7 +281,7 @@ async function collectEdition(resume, tabId) {
       note(`Continuing ${state.editionUrl} at article ${state.currentIndex + 1} of ${state.articles.length}.`);
       await saveState(`Continuing article ${state.currentIndex + 1} of ${state.articles.length}…`);
     } else {
-      const links = [...document.querySelectorAll("main a[href]")]
+      const links = email ? email.articles : [...document.querySelectorAll("main a[href]")]
         .map((anchor) => ({ url: new URL(anchor.href, location.href).href, title: anchor.textContent.trim() }))
         .filter(({ url, title }) => new URL(url).origin === location.origin && title.length > 2)
         .filter(({ url, title }) => {
@@ -175,16 +300,17 @@ async function collectEdition(resume, tabId) {
       if (nyt) links.forEach((article) => {
         article.url = `${location.origin}${new URL(article.url).pathname}`;
       });
-      const articles = [...new Map(links.map((article) => [new URL(article.url).pathname, article])).values()]
+      const articles = [...new Map(links.map((article) => [email ? article.url : new URL(article.url).pathname, article])).values()]
         .map((article) => ({ ...article, markdown: "", unsupported: false }));
-      if (!articles.length) return { error: "No article links were found on this issue page." };
+      if (!email && !articles.length) return { error: "No article links were found on this issue page." };
       const publication = economist ? "The Economist" : california ? "California Magazine" : nyt ? "The New York Times" : "Communications of the ACM";
       const filenamePublication = economist ? "economist" : california ? "california-magazine" : nyt ? "nyt" : "cacm";
       state = {
         editionUrl: currentEditionUrl,
-        filename: `${filenamePublication}-${issue}.md`,
-        heading: document.querySelector("h1")?.textContent.trim() || `${publication} — ${issue}`,
-        sourceUrl: location.href,
+        filename: email ? `newsletter-${email.from.match(/@([a-z0-9.-]+)>?$/i)?.[1].toLowerCase() || "email"}-${email.id.replace(/[^a-z0-9]/gi, "").slice(-24)}.md` : `${filenamePublication}-${issue}.md`,
+        heading: email?.subject || document.querySelector("h1")?.textContent.trim() || `${publication} — ${issue}`,
+        ...(email ? { emailMarkdown: email.markdown, emailId: email.id } : {}),
+        sourceUrl: email?.sourceUrl || location.href,
         status: "running",
         statusMessage: "",
         challengeUrl: "",
@@ -211,8 +337,32 @@ async function collectEdition(resume, tabId) {
         try {
           note(`Fetching ${article.url} (attempt ${attempt + 1}/${retryDelaysMs.length + 1})`);
           await saveState(`Collecting ${index + 1} of ${state.articles.length}: ${article.title} — attempt ${attempt + 1} of ${retryDelaysMs.length + 1}`);
-          response = await fetch(article.url, { credentials: "include", signal: AbortSignal.timeout(articleTimeoutMs) });
-          note(`Response ${response.status} ${response.statusText || ""}`.trim());
+          if (email) {
+            const fetched = await chrome.runtime.sendMessage({ type: "fetchArticle", index });
+            if (fetched.ignored) {
+              delete state.articleTabId;
+              state.articles.splice(index, 1);
+              state.currentIndex = index;
+              note(`IGNORED ${article.url}: ${fetched.reason}`);
+              await saveState(`Ignored a non-article link: ${article.title}`);
+              index -= 1;
+              break;
+            }
+            if (fetched.url) article.sourceUrl = fetched.url;
+            if (Number.isInteger(fetched.articleTabId)) state.articleTabId = fetched.articleTabId;
+            else delete state.articleTabId;
+            if (fetched.error) {
+              const error = new Error(fetched.error);
+              error.nonRetryable = fetched.nonRetryable;
+              error.needsUser = fetched.needsUser;
+              error.articleUrl = fetched.url;
+              throw error;
+            }
+            response = new Response(fetched.html, { status: fetched.status, statusText: fetched.statusText, headers: fetched.headers });
+          } else {
+            response = await fetch(article.url, { credentials: "include", signal: AbortSignal.timeout(articleTimeoutMs) });
+          }
+          note(email ? `Read rendered article page ${article.sourceUrl}` : `Response ${response.status} ${response.statusText || ""}`.trim());
           if (response.status === 404) throw new Error("HTTP 404");
           const html = await response.text();
           if (isChallengePage(html)) {
@@ -221,9 +371,13 @@ async function collectEdition(resume, tabId) {
             throw error;
           }
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const extraction = markdownFromHtml(html, article.url);
-          if (!extraction) throw new Error("No article title or body found");
-          article.markdown = extraction.markdown;
+          const extraction = markdownFromHtml(html, article.sourceUrl || article.url);
+          if (!extraction) {
+            const error = new Error("No article title or body found");
+            error.nonRetryable = !!email;
+            throw error;
+          }
+          article.markdown = email ? `> Provenance: Linked article read from the rendered page at ${article.sourceUrl}. Listed in the original email as [${article.title.replace(/[\\[\]]/g, "\\$&")}](<${article.url}>). Retrieved text may be incomplete.\n\n${extraction.markdown}` : extraction.markdown;
           article.unsupported = extraction.unsupported;
           state.currentIndex = index + 1;
           note(extraction.unsupported ? `Marked ${article.url} unsupported.` : `Extracted ${extraction.markdown.length.toLocaleString()} Markdown characters from ${article.url}.`);
@@ -231,9 +385,24 @@ async function collectEdition(resume, tabId) {
           break;
         } catch (error) {
           const reason = error.name === "TimeoutError" ? `Timed out after ${articleTimeoutMs / 1000} seconds` : error.message || String(error);
-          const nonRetryable = response?.status >= 400 && response.status < 500
+          if (email && error.needsUser) {
+            state.status = "paused";
+            state.challengeUrl = error.articleUrl || article.url;
+            note(`PAUSED ${article.url}: ${reason}`);
+            await saveState(reason);
+            return { paused: true };
+          }
+          const nonRetryable = error.nonRetryable || response?.status >= 400 && response.status < 500
             && ![408, 429].includes(response.status);
           if (error.challenge || nonRetryable || attempt === retryDelaysMs.length) {
+            if (email) {
+              article.unsupported = true;
+              article.markdown = `## ${article.title}\n\n[Email link](<${article.url}>)\n\n> **Unavailable:** ${reason}. See the original email for any excerpt; the full article was not collected.`;
+              state.currentIndex = index + 1;
+              note(`UNAVAILABLE ${article.url}: ${reason}`);
+              await saveState(`Article unavailable: ${article.title}. Keeping its email link and excerpt.`);
+              break;
+            }
             state.articles.splice(index, 1);
             note(`SKIPPED ${article.url}: ${reason}; ${state.articles.length} articles remain in the issue.`);
             await saveState(`Skipped unreadable article “${article.title}”: ${reason}. ${state.articles.length} articles remain in the issue.`);
@@ -249,25 +418,19 @@ async function collectEdition(resume, tabId) {
     }
 
     const unsupported = state.articles.filter((article) => article.unsupported).length;
-    const contents = state.articles
-      .map((article, index) => `- [${article.title.replace(/[\\[\]]/g, "\\$&")}](#article-${index + 1})`)
-      .join("\n");
-    const articleMarkdown = state.articles
-      .map((article, index) => `<a id="article-${index + 1}"></a>\n\n${article.markdown}`)
-      .join("\n\n---\n\n");
-    const markdown = `# ${state.heading}\n\nSource: ${state.sourceUrl}\n\n## Contents\n\n${contents}\n\n---\n\n${articleMarkdown}\n`;
-    note(`Built ${markdown.length.toLocaleString()} Markdown characters.`);
-    await saveState(`Starting download for ${state.articles.length} articles${unsupported ? `; ${unsupported} interactive unsupported` : ""}.`);
-    const downloadResponse = await chrome.runtime.sendMessage({ type: "download", content: markdown, filename: state.filename, mimeType: "text/markdown" });
+    await saveState(`Starting download for ${state.articles.length} articles${unsupported ? `; ${unsupported} unsupported or unavailable` : ""}.`);
+    const downloadResponse = await chrome.runtime.sendMessage({ type: "download", filename: state.filename, mimeType: "text/markdown" });
     if (!downloadResponse?.ok) {
       state.status = "paused";
       note(`Download failed: ${downloadResponse?.error || "Chrome did not start the download."}`);
       await saveState("The issue is complete, but its download failed. Continue collection to retry the download.");
       return { paused: true };
     }
+    note(`Built ${downloadResponse.contentLength.toLocaleString()} Markdown characters.`);
     state.status = "completed";
+    state.downloadId = downloadResponse.downloadId;
     note(`Chrome accepted download ${downloadResponse.downloadId}.`);
-    await saveState(`Downloaded ${state.articles.length} articles${unsupported ? `; ${unsupported} interactive unsupported` : ""}.`);
+    await saveState(`Downloaded ${email ? "email and " : ""}${state.articles.length} articles${unsupported ? `; ${unsupported} unsupported or unavailable` : ""}.`);
     return { completed: true };
   } catch (error) {
     if (!state) return { error: error.message || String(error) };
@@ -282,52 +445,133 @@ async function collectEdition(resume, tabId) {
   }
 }
 
-async function runCollection(resume) {
+async function runCollection(resume, permissionRequest = null) {
   collectButton.disabled = true;
   continueButton.disabled = true;
   setStatus(resume ? "Continuing saved collection…" : "Cataloging links and starting collection…");
+  let errorMessage = "";
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (permissionRequest) await permissionRequest;
+    const tab = await readingBatchTab(resume);
     if (!tab?.id) throw new Error("Chrome did not return an active tab.");
-    const currentEdition = isIssueUrl(tab.url) ? editionUrl(tab.url) : "";
+    let email = null;
+    if (isGmailUrl(tab.url)) {
+      const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: captureEmails });
+      email = result?.find((message) => message.id === emailSelect.value);
+      if (!email) throw new Error("Select one expanded email. Reopen Website Reader if the message has changed.");
+    }
+    const currentEdition = email?.editionUrl || (isIssueUrl(tab.url) ? editionUrl(tab.url) : "");
     if (!currentEdition) throw new Error("Open a supported publication issue page first.");
     const { collectionState } = await chrome.storage.local.get("collectionState");
-    if (!resume && ["running", "paused"].includes(collectionState?.status) && collectionState.editionUrl !== currentEdition) {
-      throw new Error(`A collection is ${collectionState.status} for ${collectionState.editionUrl}. Open that issue before starting another one.`);
+    if (resume && email && collectionState?.editionUrl === currentEdition) {
+      const pending = collectionState.articles.slice(collectionState.currentIndex)
+        .filter(article => email.articles.some(link => link.url === article.url));
+      if (pending.length !== collectionState.articles.length - collectionState.currentIndex) {
+        if (Number.isInteger(collectionState.articleTabId)
+          && pending[0]?.url !== collectionState.articles[collectionState.currentIndex]?.url) {
+          try { await chrome.tabs.remove(collectionState.articleTabId); } catch { /* Already closed. */ }
+          delete collectionState.articleTabId;
+        }
+        collectionState.articles.splice(collectionState.currentIndex, collectionState.articles.length, ...pending);
+        await chrome.storage.local.set({ collectionState });
+      }
     }
-    const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectEdition, args: [resume, tab.id] });
+    if (!resume && ["running", "paused"].includes(collectionState?.status) && collectionState.editionUrl !== currentEdition) {
+      throw new Error(`A collection is ${collectionState.status} for ${collectionState.editionUrl}. Open that reading batch before starting another one.`);
+    }
+    if (!resume && Number.isInteger(collectionState?.articleTabId)) {
+      try { await chrome.tabs.remove(collectionState.articleTabId); } catch { /* Already closed. */ }
+    }
+    const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectEdition, args: [resume, tab.id, email] });
     if (result?.error) throw new Error(result.error);
   } catch (error) {
-    setStatus(error.message || "The issue could not be collected.");
+    errorMessage = error.message || "The reading batch could not be collected.";
   } finally {
     await loadState();
+    if (errorMessage) setStatus(errorMessage);
   }
 }
 
-collectButton.addEventListener("click", async () => await runCollection(false));
-continueButton.addEventListener("click", async () => await runCollection(true));
+async function collectFromClick(resume) {
+  try {
+    const email = emails.find((message) => message.id === emailSelect.value);
+    const articleUrl = resume ? status.querySelector("a")?.href : "";
+    const links = email ? [...email.articles.map(({ url }) => url), ...(articleUrl ? [articleUrl] : [])] : [];
+    const origins = [...new Set(links.map(url => {
+      const { protocol, hostname } = new URL(url);
+      return protocol === "https:" && (hostname === "medium.com" || hostname.endsWith(".medium.com"))
+        ? "https://*.medium.com/*" : `${protocol}//${hostname}/*`;
+    }))];
+    // Start the permission request during the click, before any awaited operation.
+    const permissionRequest = origins.length ? chrome.permissions.request({ origins }) : null;
+    await runCollection(resume, permissionRequest);
+  } catch (error) { setStatus(error.message || "Could not request article-site access."); }
+}
+collectButton.addEventListener("click", async () => await collectFromClick(false));
+continueButton.addEventListener("click", async () => await collectFromClick(true));
+skipButton.addEventListener("click", async () => {
+  skipButton.disabled = true;
+  try {
+    const { collectionState: state } = await chrome.storage.local.get("collectionState");
+    if (state?.status !== "paused" || state.editionUrl !== activeEditionUrl || !Number.isInteger(state.articleTabId)) throw new Error("Return to the saved Gmail message before skipping an article.");
+    const article = state.articles[state.currentIndex];
+    article.unsupported = true;
+    article.markdown = `## ${article.title}\n\n[Email link](<${article.url}>)\n\n> **Unavailable:** Skipped by the user after: ${state.statusMessage}. See the original email for any excerpt.`;
+    try { await chrome.tabs.remove(state.articleTabId); } catch { /* Already closed. */ }
+    delete state.articleTabId;
+    state.currentIndex += 1;
+    state.challengeUrl = "";
+    state.log.push(`${new Date().toISOString()}  SKIPPED ${article.url}: requested by the user.`);
+    await chrome.storage.local.set({ collectionState: state, latestLog: state.log.join("\n") });
+    await runCollection(true);
+  } catch (error) { setStatus(error.message || "Could not skip the article."); skipButton.disabled = false; }
+});
+emailSelect.addEventListener("change", async () => {
+  activeEditionUrl = emails.find((message) => message.id === emailSelect.value)?.editionUrl || "";
+  setStatus(activeEditionUrl ? "Ready to collect the selected email and its linked articles." : "Select one expanded email.");
+  const { collectionState } = await chrome.storage.local.get("collectionState");
+  renderState(collectionState);
+});
+
+async function digestPrompt(url) {
+  const publication = isGmailUrl(url) ? "email" : publicationName(url);
+  const newsGuidance = publication === "The Economist"
+    ? "- **The World This Week:** Treat Politics and Business as collections of discrete news items. Summarize each item in one sentence unless a second sentence is necessary."
+    : "- **News roundups:** Treat each roundup as a collection of discrete news items. Summarize each item in one sentence unless a second sentence is necessary.";
+  const opinionGuidance = publication === "The Economist"
+    ? "- **Leaders, columns and opinion:** Up to five sentences. Clearly distinguish the article's claim from the evidence offered for it. Identify significant assumptions, missing evidence, acknowledged counterevidence, or material gaps between evidence and conclusion."
+    : "- **Editorials, columns and opinion:** Up to five sentences. Clearly distinguish the article's claim from the evidence offered for it. Identify significant assumptions, missing evidence, acknowledged counterevidence, or material gaps between evidence and conclusion.";
+  const response = await fetch(chrome.runtime.getURL(publication === "email" ? "email-digest-prompt.md" : "issue-digest-prompt.md"));
+  if (!response.ok) throw new Error("The digest prompt could not be loaded.");
+  const prompt = (await response.text())
+    .replaceAll("{{publication}}", publication === "The Economist" ? "Economist" : publication)
+    .replace("{{publicationSpecificNewsGuidance}}", newsGuidance)
+    .replace("{{publicationSpecificOpinionGuidance}}", opinionGuidance);
+  return `${prompt.trim()}\n`;
+}
 
 copyButton.addEventListener("click", async () => {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const publication = publicationName(tab?.url || "");
-    const newsGuidance = publication === "The Economist"
-      ? "- **The World This Week:** Treat Politics and Business as collections of discrete news items. Summarize each item in one sentence unless a second sentence is necessary."
-      : "- **News roundups:** Treat each roundup as a collection of discrete news items. Summarize each item in one sentence unless a second sentence is necessary.";
-    const opinionGuidance = publication === "The Economist"
-      ? "- **Leaders, columns and opinion:** Up to five sentences. Clearly distinguish the article's claim from the evidence offered for it. Identify significant assumptions, missing evidence, acknowledged counterevidence, or material gaps between evidence and conclusion."
-      : "- **Editorials, columns and opinion:** Up to five sentences. Clearly distinguish the article's claim from the evidence offered for it. Identify significant assumptions, missing evidence, acknowledged counterevidence, or material gaps between evidence and conclusion.";
-    const response = await fetch(chrome.runtime.getURL("issue-digest-prompt.md"));
-    if (!response.ok) throw new Error("The digest prompt could not be loaded.");
-    const prompt = (await response.text())
-      .replaceAll("{{publication}}", publication === "The Economist" ? "Economist" : publication)
-      .replace("{{publicationSpecificNewsGuidance}}", newsGuidance)
-      .replace("{{publicationSpecificOpinionGuidance}}", opinionGuidance);
-    await navigator.clipboard.writeText(`${prompt.trim()}\n`);
-    setStatus(`Copied the ${publication} digest prompt. Upload the issue Markdown separately.`);
-  } catch (error) {
-    setStatus(error.message || "The digest prompt could not be copied.");
-  }
+    const tab = await readingBatchTab();
+    await navigator.clipboard.writeText(await digestPrompt(tab?.url || ""));
+    const publication = isGmailUrl(tab?.url) ? "email" : publicationName(tab?.url || "");
+    setStatus(`Copied the ${publication} digest prompt. Upload the collected Markdown separately.`);
+  } catch (error) { setStatus(error.message || "The digest prompt could not be copied."); }
+});
+
+handoffButton.addEventListener("click", async () => {
+  handoffButton.disabled = true;
+  try {
+    const permissionRequest = chrome.permissions.request({ origins: ["https://chatgpt.com/*"] });
+    await permissionRequest;
+    const { collectionState } = await chrome.storage.local.get("collectionState");
+    if (collectionState?.status !== "completed") throw new Error("Complete a collection first.");
+    await navigator.clipboard.writeText(await digestPrompt(collectionState.sourceUrl));
+    setStatus("Opening ChatGPT with the collected file. The matching digest prompt is copied.");
+    const result = await chrome.runtime.sendMessage({ type: "handoff" });
+    if (!result?.ok) throw new Error(result?.error || "The ChatGPT handoff failed.");
+  } catch (error) { setStatus(error.message || "The ChatGPT handoff failed."); }
+  finally { const { collectionState } = await chrome.storage.local.get("collectionState"); handoffButton.disabled = collectionState?.status !== "completed" || !Number.isInteger(collectionState.downloadId); }
 });
 
 downloadLogButton.addEventListener("click", async () => {
@@ -343,16 +587,28 @@ downloadLogButton.addEventListener("click", async () => {
 
 async function loadState() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const { collectionState, latestLog = "" } = await chrome.storage.local.get(["collectionState", "latestLog"]);
+    const tab = await readingBatchTab();
     activeEditionUrl = isIssueUrl(tab?.url) ? editionUrl(tab.url) : "";
-    const publication = publicationName(tab?.url || "");
+    const publication = isGmailUrl(tab?.url) ? "email" : publicationName(tab?.url || "");
+    const gmail = isGmailUrl(tab?.url);
+    const selectedId = emailSelect.value || collectionState?.emailId;
+    emailLabel.hidden = !gmail;
+    emails = [];
+    if (gmail) {
+      const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: captureEmails });
+      emails = result || [];
+      emailSelect.replaceChildren(new Option("Select one expanded email…", ""), ...emails.map((email) => new Option(`${email.from} — ${email.date}`, email.id)));
+      emailSelect.value = emails.some((email) => email.id === selectedId) ? selectedId : emails.length === 1 ? emails[0].id : "";
+      activeEditionUrl = emails.find((email) => email.id === emailSelect.value)?.editionUrl || "";
+      setStatus(emails.length ? activeEditionUrl ? "Ready to collect the email and its linked articles." : "Select one expanded email." : "Open an email in Gmail and expand its message body, then reopen Website Reader.");
+    }
     copyButton.textContent = `Copy ${publication} digest prompt`;
-    collectButton.textContent = `Collect ${publication} issue`;
+    collectButton.textContent = gmail ? "Collect email and articles" : `Collect ${publication} issue`;
     collectButton.disabled = !activeEditionUrl;
-    if (!activeEditionUrl) {
+    if (!activeEditionUrl && !gmail) {
       setStatus(`Copy an issue digest prompt for ${publication}. To collect an issue, open its issue page on The Economist, California Magazine, Communications of the ACM, or The New York Times homepage.`);
     }
-    const { collectionState, latestLog = "" } = await chrome.storage.local.get(["collectionState", "latestLog"]);
     if (latestLog) {
       logOutput.textContent = latestLog;
       downloadLogButton.disabled = false;
@@ -366,5 +622,7 @@ async function loadState() {
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes.collectionState) renderState(changes.collectionState.newValue);
 });
+
+chrome.tabs.onActivated.addListener(async () => await loadState());
 
 loadState();

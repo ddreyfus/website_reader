@@ -6,7 +6,7 @@
 }
 
 body {
-  width: 320px;
+  min-width: 280px;
   margin: 0;
 }
 
@@ -35,11 +35,9 @@ h1 {
   font-weight: 600;
 }
 
-.edition-mark {
-  color: #27734b;
-  font-family: Georgia, serif;
-  font-size: 30px;
-  font-weight: 700;
+#close {
+  width: auto;
+  margin-left: 12px;
 }
 
 #status {
@@ -56,7 +54,7 @@ h1 {
   font-weight: 700;
 }
 
-button {
+button, select {
   width: 100%;
   border: 1px solid #cbd0c9;
   border-radius: 9px;
@@ -85,9 +83,17 @@ button:disabled {
   opacity: 0.45;
 }
 
-button:focus-visible {
+button:focus-visible, select:focus-visible {
   outline: 3px solid #efb954;
   outline-offset: 2px;
+}
+
+#email-label {
+  font-size: 12px;
+}
+
+#email-message {
+  margin: 6px 0 12px;
 }
 
 #status a:focus-visible {
