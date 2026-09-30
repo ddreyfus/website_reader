@@ -204,6 +204,7 @@ async function collectEdition(resume, tabId) {
           await saveState(`Collecting ${index + 1} of ${state.articles.length}: ${article.title} — attempt ${attempt + 1} of ${retryDelaysMs.length + 1}`);
           response = await fetch(article.url, { credentials: "include", signal: AbortSignal.timeout(articleTimeoutMs) });
           note(`Response ${response.status} ${response.statusText || ""}`.trim());
+          if (response.status === 404) throw new Error("HTTP 404");
           const html = await response.text();
           if (isChallengePage(html)) {
             const error = new Error("CAPTCHA or browser challenge detected");
@@ -221,20 +222,14 @@ async function collectEdition(resume, tabId) {
           break;
         } catch (error) {
           const reason = error.name === "TimeoutError" ? `Timed out after ${articleTimeoutMs / 1000} seconds` : error.message || String(error);
-          if (error.challenge) {
-            state.status = "paused";
-            state.challengeUrl = article.url;
-            note(`PAUSED ${article.url}: ${reason}`);
-            await saveState(`Challenge detected for “${article.title}”. Complete it, return to this issue, then continue collection.`);
-            return { paused: true };
-          }
           const nonRetryable = response?.status >= 400 && response.status < 500
             && ![408, 429].includes(response.status);
-          if (nonRetryable || attempt === retryDelaysMs.length) {
-            state.status = "paused";
-            note(`PAUSED ${article.url}${nonRetryable ? " without retry" : " after retries"}: ${reason}`);
-            await saveState(`Could not collect “${article.title}”${nonRetryable ? "" : " after retries"}. Continue collection to retry it.`);
-            return { paused: true };
+          if (error.challenge || nonRetryable || attempt === retryDelaysMs.length) {
+            state.articles.splice(index, 1);
+            note(`SKIPPED ${article.url}: ${reason}; ${state.articles.length} articles remain in the issue.`);
+            await saveState(`Skipped unreadable article “${article.title}”: ${reason}. ${state.articles.length} articles remain in the issue.`);
+            index -= 1;
+            break;
           }
           const delayMs = Math.max(retryDelaysMs[attempt], response?.status === 429 ? retryAfterMs(response) : 0);
           note(`${reason}; retrying ${article.url} in ${(delayMs / 1000).toFixed(1)}s.`);

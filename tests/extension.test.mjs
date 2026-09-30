@@ -41,6 +41,9 @@ test("Website Reader extension", async (t) => {
   const notFoundIssueUrl = "https://cacm.acm.org/issue/not-found-test/";
   const notFoundArticleUrl = "https://cacm.acm.org/news/missing-article/";
   let notFoundRequests = 0;
+  let notFoundLinks = [];
+  let failureStatus = 404;
+  let failureBody = "Not found";
   const profilePath = await fs.mkdtemp(path.join(os.tmpdir(), "website-reader-test-"));
   const context = await chromium.launchPersistentContext(profilePath, {
     channel: "chromium",
@@ -65,14 +68,14 @@ test("Website Reader extension", async (t) => {
         await route.fulfill({
           status: 200,
           contentType: "text/html",
-          body: `<!doctype html><main><h1>Missing Article Test</h1><a href="${notFoundArticleUrl}">Missing Article</a></main>`
+          body: `<!doctype html><main><h1>Missing Article Test</h1>${notFoundLinks.map(([url, title]) => `<a href="${url}">${title}</a>`).join("")}</main>`
         });
         return;
       }
 
       if (url === notFoundArticleUrl) {
         notFoundRequests += 1;
-        await route.fulfill({ status: 404, contentType: "text/html", body: "Not found" });
+        await route.fulfill({ status: failureStatus, contentType: "text/html", body: failureBody });
         return;
       }
 
@@ -140,21 +143,49 @@ test("Website Reader extension", async (t) => {
       });
     }
 
-    await t.test("does not retry permanent HTTP errors", async () => {
-      await worker.evaluate(async () => await chrome.storage.local.clear());
-      const issuePage = await context.newPage();
-      await issuePage.goto(notFoundIssueUrl);
-      const popup = await openPopup(issuePage);
+    for (const position of [0, 1, 2, "only", "resume", "forbidden", "challenge", "server", "unreadable"]) {
+      await t.test(`skips an unreadable article (${position}) and completes`, async () => {
+        await worker.evaluate(async () => await chrome.storage.local.clear());
+        notFoundRequests = 0;
+        failureStatus = position === "forbidden" ? 403 : position === "server" ? 500 : position === "unreadable" ? 200 : 404;
+        failureBody = position === "challenge" ? "<title>Just a moment</title>" : "Not found";
+        if (position === "challenge") failureStatus = 403;
+        notFoundLinks = position === "only" ? [] : [...fixtures[2].links];
+        notFoundLinks.splice(typeof position === "number" ? position : position === "resume" ? notFoundLinks.length : 1, 0, [notFoundArticleUrl, "Missing Article"]);
+        const issuePage = await context.newPage();
+        await issuePage.goto(notFoundIssueUrl);
+        if (position === "resume") {
+          await worker.evaluate(async ({ issueUrl, links }) => {
+            await chrome.storage.local.set({ collectionState: {
+              editionUrl: issueUrl, sourceUrl: issueUrl, filename: "resumed.md",
+              heading: "Resumed issue", status: "paused", currentIndex: 2, log: [],
+              articles: links.map(([url, title], index) => ({ url, title, markdown: index < 2 ? `## ${title}\n\nPreviously collected body.` : "", unsupported: false }))
+            } });
+          }, { issueUrl: notFoundIssueUrl, links: notFoundLinks });
+        }
+        const popup = await openPopup(issuePage);
 
-      try {
-        await popup.getByRole("button", { name: "Collect Communications of the ACM issue", exact: true }).click();
-        await popup.getByText("Could not collect “Missing Article”.", { exact: false }).waitFor({ timeout: 5000 });
-        assert.equal(notFoundRequests, 1);
-      } finally {
-        await issuePage.close();
-        await popup.close();
-      }
-    });
+        try {
+          await popup.getByRole("button", { name: position === "resume" ? "Continue collection" : "Collect Communications of the ACM issue", exact: true }).click();
+          const expectedLinks = position === "only" ? [] : fixtures[2].links;
+          await popup.getByText(`Downloaded ${expectedLinks.length} articles.`, { exact: true }).waitFor({ timeout: 100000 });
+          const state = await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState);
+          assert.equal(notFoundRequests, ["server", "unreadable"].includes(position) ? 5 : 1);
+          assert.equal(state.status, "completed");
+          assert.equal(state.currentIndex, expectedLinks.length);
+          assert.deepEqual(state.articles.map(({ url }) => url), expectedLinks.map(([url]) => url));
+          assert.ok(state.articles.every(({ markdown }) => markdown.length > 0));
+          assert.match(state.log.join("\n"), /SKIPPED .*missing-article/);
+          if (failureStatus === 404) assert.match(state.log.join("\n"), /HTTP 404/);
+          assert.doesNotMatch(state.log.join("\n"), /PAUSED/);
+          if (!["server", "unreadable"].includes(position)) assert.doesNotMatch(state.log.join("\n"), /retrying/);
+          assert.equal(await popup.getByRole("button", { name: "Continue collection", exact: true }).isVisible(), false);
+        } finally {
+          await issuePage.close();
+          await popup.close();
+        }
+      });
+    }
 
     await t.test("copies the publication-specific Economist prompt", async () => {
       await worker.evaluate(async () => await chrome.storage.local.clear());

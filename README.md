@@ -11,7 +11,7 @@ Website Reader is a Chrome/Chromium extension that collects an entire publicatio
 - Identifies interactive or suspiciously short articles that cannot be extracted reliably and includes them as clearly marked unsupported entries with links to the originals.
 - Spaces requests by 1–2 seconds and retries failures with exponential backoff, including server-provided `Retry-After` delays.
 - Saves the article queue, completed content, current position, status, and detailed log in local extension storage so closing the popup does not discard progress.
-- Pauses instead of producing a partial issue when an ordinary article cannot be collected or a CAPTCHA/browser challenge is encountered.
+- Logs and skips unreadable articles without blocking the issue: permanent HTTP errors and browser challenges are skipped immediately; temporary failures are skipped after retries. Skipped articles are removed from the count and output.
 - Resumes a paused collection from its saved position after the problem is resolved.
 - Downloads and displays the latest detailed collection log.
 - Tracks completed and interrupted extension downloads; it cleans up partial files and removes failed downloads from Chrome's history when possible.
@@ -57,16 +57,15 @@ The integration test loads the unpacked extension in a temporary Chromium profil
 5. Leave the issue tab open while collection runs. The popup may be closed and reopened without losing saved progress.
 6. When collection finishes, choose where to save the generated Markdown file.
 
-The popup reports the current article, its position in the issue, the current attempt, and any retry delay. A download begins only after all ordinary articles have been collected; recognized unsupported interactive articles do not prevent completion.
+The popup reports the current article, its position in the issue, the current attempt, and any retry delay. A download begins after every candidate has been collected, marked unsupported, or logged and skipped. Unreadable articles never prevent completion.
 
 ## Resume an interrupted collection
 
-Collection pauses if an article still fails after all retries, a browser challenge is detected, or the collection tab is closed or navigated away.
+Collection pauses if the collection tab is closed or navigated away, or the collection itself is interrupted. Individual article failures are logged and skipped.
 
 1. Read the status message in the popup.
-2. If an **Open challenge** link appears, open it and complete the challenge yourself.
-3. Return to the same issue page used to start the collection.
-4. Open Website Reader and select **Continue collection**.
+2. Return to the same issue page used to start the collection.
+3. Open Website Reader and select **Continue collection**.
 
 A saved collection is tied to its original issue URL and cannot be resumed from a different issue. If the completed issue's download fails, **Continue collection** retries the download without recollecting successful articles.
 
@@ -85,7 +84,7 @@ The Copy button places only the instructions from [`issue-digest-prompt.md`](iss
 - Expand **Latest detailed log** in the popup to inspect collection activity.
 - Select **Download latest log** to save the current log as `website-reader.log`.
 
-The log records cataloging, request timing, response status, extraction results, retries, pauses, downloads, and cleanup errors. Only the latest collection log is retained.
+The log records cataloging, request timing, response status, extraction results, retries, skipped articles, pauses, downloads, and cleanup errors. Only the latest collection log is retained.
 
 ## Output and extraction limits
 
@@ -111,7 +110,6 @@ The extension requests:
 
 - **Collect issue is unavailable or reports the wrong page:** Open a supported issue URL listed above, then reopen the popup.
 - **An article cannot be accessed:** Confirm that the publication tab is signed in when required and that the account has access to the article.
-- **Collection pauses on a challenge:** Use **Open challenge**, complete it, return to the same issue page, and select **Continue collection**.
-- **Collection pauses after retries:** Try the original article in the browser, resolve any access or network problem, and then select **Continue collection**.
+- **An article was skipped:** Check the log for its URL and failure reason. Collection continues automatically with the remaining articles.
 - **The copied text does not include the issue:** This is intentional. Upload the downloaded Markdown to the AI chat separately, then paste the copied digest prompt.
 - **Recent code changes do not appear:** Reload the unpacked extension from `chrome://extensions`, then reopen its popup.
