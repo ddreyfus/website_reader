@@ -34,6 +34,15 @@ const fixtures = [
       ["https://cacm.acm.org/research/a-research-article/", "A Research Article"],
       ["https://cacm.acm.org/opinion/an-opinion-article/", "An Opinion Article"]
     ]
+  },
+  {
+    publication: "The New York Times",
+    issueUrl: "https://www.nytimes.com/",
+    filename: `nyt-${new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())}.md`,
+    links: [
+      ["https://www.nytimes.com/2026/09/29/world/test-world-story.html", "A world news story"],
+      ["https://www.nytimes.com/2026/09/28/us/test-national-story.html", "A national news story"]
+    ]
   }
 ];
 
@@ -85,7 +94,7 @@ test("Website Reader extension", async (t) => {
         await route.fulfill({
           status: 200,
           contentType: "text/html",
-          body: `<!doctype html><main><h1>${fixture.publication} Test Issue</h1>${links}<a href="/search">Search publication</a>${fixture.publication === "Communications of the ACM" ? '<a href="/news/promotional-page/">Learn More</a>' : ""}</main>`
+          body: `<!doctype html><main><h1>${fixture.publication} Test Issue</h1>${links}<a href="/search">Search publication</a>${fixture.publication === "The New York Times" ? `<a href="/section/world">World</a><a href="/games/wordle/index.html">Wordle</a><a href="${fixture.links[0][0]}?campaign=home#comments">${fixture.links[0][1]}</a>` : ""}${fixture.publication === "Communications of the ACM" ? '<a href="/news/promotional-page/">Learn More</a>' : ""}</main>`
         });
         return;
       }
@@ -136,6 +145,13 @@ test("Website Reader extension", async (t) => {
 
           assert.equal(state?.filename, fixture.filename);
           assert.deepEqual(state.articles.map((article) => article.url), fixture.links.map(([url]) => url));
+          if (fixture.publication === "The New York Times") {
+            await popup.getByText("Downloaded 2 articles.", { exact: true }).waitFor({ timeout: 15000 });
+            state = await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState);
+            assert.ok(state.articles.every(({ markdown }) => markdown.includes("Evidence-rich article body.")));
+            await popup.getByRole("button", { name: "Copy The New York Times digest prompt", exact: true }).click();
+            await popup.getByText("Copied the The New York Times digest prompt.", { exact: false }).waitFor();
+          }
         } finally {
           await issuePage.close();
           await popup.close();

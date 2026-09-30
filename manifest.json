@@ -7,7 +7,8 @@
   "host_permissions": [
     "https://www.economist.com/*",
     "https://alumni.berkeley.edu/*",
-    "https://cacm.acm.org/*"
+    "https://cacm.acm.org/*",
+    "https://www.nytimes.com/*"
   ],
   "background": {
     "service_worker": "background.js"

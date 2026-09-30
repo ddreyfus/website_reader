@@ -12,7 +12,8 @@ function isIssueUrl(url) {
     const parsed = new URL(url);
     return (parsed.hostname === "www.economist.com" && /^\/weeklyedition\/[^/]+\/?$/.test(parsed.pathname))
       || (parsed.hostname === "alumni.berkeley.edu" && /^\/issue\/[^/]+\/?$/.test(parsed.pathname))
-      || (parsed.hostname === "cacm.acm.org" && /^\/issue\/[^/]+\/?$/.test(parsed.pathname));
+      || (parsed.hostname === "cacm.acm.org" && /^\/issue\/[^/]+\/?$/.test(parsed.pathname))
+      || (parsed.hostname === "www.nytimes.com" && parsed.pathname === "/");
   } catch {
     return false;
   }
@@ -24,6 +25,7 @@ function publicationName(url) {
     if (hostname === "economist.com") return "The Economist";
     if (hostname === "alumni.berkeley.edu") return "California Magazine";
     if (hostname === "cacm.acm.org") return "Communications of the ACM";
+    if (hostname === "nytimes.com") return "The New York Times";
     return hostname || "this publication";
   } catch {
     return "this publication";
@@ -133,11 +135,14 @@ async function collectEdition(resume, tabId) {
         : { markdown, unsupported: false };
     }
 
-    const issue = location.pathname.split("/").filter(Boolean).at(-1);
+    const nyt = location.hostname === "www.nytimes.com" && location.pathname === "/";
+    const issue = nyt
+      ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())
+      : location.pathname.split("/").filter(Boolean).at(-1);
     const economist = location.hostname === "www.economist.com" && location.pathname.startsWith("/weeklyedition/");
     const california = location.hostname === "alumni.berkeley.edu" && location.pathname.startsWith("/issue/");
     const cacm = location.hostname === "cacm.acm.org" && location.pathname.startsWith("/issue/");
-    if (!issue || (!economist && !california && !cacm)) {
+    if (!issue || (!economist && !california && !cacm && !nyt)) {
       return { error: "Open a supported publication issue page first." };
     }
 
@@ -156,6 +161,7 @@ async function collectEdition(resume, tabId) {
         .filter(({ url, title }) => new URL(url).origin === location.origin && title.length > 2)
         .filter(({ url, title }) => {
           const pathname = new URL(url).pathname;
+          if (nyt) return /^\/\d{4}\/\d{2}\/\d{2}\/.+\.html$/.test(pathname);
           if (california) return pathname.startsWith(`/california-magazine/${issue}/`) && pathname !== `/california-magazine/${issue}/`;
           if (cacm) return !/^(?:learn|read) more$/i.test(title)
             && /^\/(?:research|opinion|practice|news|research-highlights|careers)\/[^/]+\/?$/.test(pathname);
@@ -166,11 +172,14 @@ async function collectEdition(resume, tabId) {
           return title.length > 10 && !ignoredPaths.some((path) => pathname.startsWith(path));
         })
         .filter(({ url }) => !/\.(?:jpg|jpeg|png|gif|svg|webp|pdf)$/i.test(new URL(url).pathname));
+      if (nyt) links.forEach((article) => {
+        article.url = `${location.origin}${new URL(article.url).pathname}`;
+      });
       const articles = [...new Map(links.map((article) => [new URL(article.url).pathname, article])).values()]
         .map((article) => ({ ...article, markdown: "", unsupported: false }));
       if (!articles.length) return { error: "No article links were found on this issue page." };
-      const publication = economist ? "The Economist" : california ? "California Magazine" : "Communications of the ACM";
-      const filenamePublication = economist ? "economist" : california ? "california-magazine" : "cacm";
+      const publication = economist ? "The Economist" : california ? "California Magazine" : nyt ? "The New York Times" : "Communications of the ACM";
+      const filenamePublication = economist ? "economist" : california ? "california-magazine" : nyt ? "nyt" : "cacm";
       state = {
         editionUrl: currentEditionUrl,
         filename: `${filenamePublication}-${issue}.md`,
@@ -341,7 +350,7 @@ async function loadState() {
     collectButton.textContent = `Collect ${publication} issue`;
     collectButton.disabled = !activeEditionUrl;
     if (!activeEditionUrl) {
-      setStatus(`Copy an issue digest prompt for ${publication}. To collect an issue, open its issue page on The Economist, California Magazine, or Communications of the ACM.`);
+      setStatus(`Copy an issue digest prompt for ${publication}. To collect an issue, open its issue page on The Economist, California Magazine, Communications of the ACM, or The New York Times homepage.`);
     }
     const { collectionState, latestLog = "" } = await chrome.storage.local.get(["collectionState", "latestLog"]);
     if (latestLog) {

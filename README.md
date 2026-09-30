@@ -22,6 +22,7 @@ Website Reader supports all issue pages under:
 - `https://www.economist.com/weeklyedition/`
 - `https://alumni.berkeley.edu/issue/`
 - `https://cacm.acm.org/issue/`
+- `https://www.nytimes.com/` (homepage article links, using your signed-in session)
 
 ## Install locally
 
@@ -51,13 +52,15 @@ The integration test loads the unpacked extension in a temporary Chromium profil
 ## Collect an issue
 
 1. Sign in to the publication if its articles require an account.
-2. Open a supported issue page.
+2. Open a supported issue page or the NYT homepage.
 3. Open the **Website Reader** extension popup.
 4. Select **Collect issue**.
 5. Leave the issue tab open while collection runs. The popup may be closed and reopened without losing saved progress.
 6. When collection finishes, choose where to save the generated Markdown file.
 
 The popup reports the current article, its position in the issue, the current attempt, and any retry delay. A download begins after every candidate has been collected, marked unsupported, or logged and skipped. Unreadable articles never prevent completion.
+
+For The New York Times, the collector snapshots the dated article links currently present on the homepage, removes duplicate and tracking links, and names the file `nyt-YYYY-MM-DD.md` using the collection date in New York. Section navigation and games are excluded. Sign in before collecting; the collector uses that browser session.
 
 ## Resume an interrupted collection
 
@@ -100,7 +103,7 @@ Website Reader does not send collected content to an external service. Article c
 
 The extension requests:
 
-- Access to `www.economist.com`, `alumni.berkeley.edu`, and `cacm.acm.org` to read issue pages and fetch their articles.
+- Access to `www.economist.com`, `alumni.berkeley.edu`, `cacm.acm.org`, and `www.nytimes.com` to read issue pages and fetch their articles.
 - `tabs` and `scripting` to verify the active issue tab and run collection in that tab.
 - `storage` to checkpoint resumable progress and retain the latest log and completed issue.
 - `downloads` to save Markdown and log files and clean up interrupted extension downloads.
