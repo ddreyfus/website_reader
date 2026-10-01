@@ -137,7 +137,13 @@ test("newsletter articles use rendered tabs and pause for user access", async (t
 
     await t.test("redirect access pauses, then reads rendered content and closes its tab", async () => {
       articleLinks = [`${origin}/redirect`];
-      await gmail.goto(gmailUrl);
+      // Reuse an isolated world created before Gmail opens the message.
+      await gmail.goto("https://mail.google.com/mail/u/0/#inbox");
+      await worker.evaluate(async () => {
+        const [tab] = await chrome.tabs.query({ url: "https://mail.google.com/*" });
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => location.href });
+      });
+      await gmail.evaluate(url => { history.replaceState(null, "", url); }, gmailUrl);
       await worker.evaluate(() => { globalThis.originalContains = chrome.permissions.contains; chrome.permissions.contains = async options => options.origins.some(origin => origin.startsWith("http://localhost/")) ? false : await globalThis.originalContains(options); });
       let popup = await openPopup();
       await popup.getByRole("button", { name: "Collect email and articles" }).click();

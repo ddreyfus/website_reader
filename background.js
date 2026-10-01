@@ -47,7 +47,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       const { collectionState: state } = await chrome.storage.local.get("collectionState");
       if (!state?.emailId || state.status !== "running" || sender.tab?.id !== state.tabId
-        || sender.url !== state.sourceUrl || !Number.isInteger(message.index)
+        // Gmail can retain the isolated world's original URL after opening a message.
+        || (sender.tab?.url || sender.url) !== state.sourceUrl
+        || new URL(sender.url).origin !== new URL(state.sourceUrl).origin
+        || (sender.frameId != null && sender.frameId !== 0) || !Number.isInteger(message.index)
         || message.index !== state.currentIndex) throw new Error("No active email article request.");
       const article = state.articles[message.index];
       if (!article) throw new Error("Unknown email article.");
