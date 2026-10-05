@@ -25,9 +25,11 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
     worker ||= await context.waitForEvent("serviceworker");
     const extensionId = new URL(worker.url()).host;
     let signedIn = true;
+    let startupDelay = 0;
+    let uploadError = false;
     await context.route("https://**/*", async (route) => {
       await route.fulfill({ status: 200, contentType: "text/html", body: route.request().url().startsWith("https://chatgpt.com/")
-        ? signedIn ? `<!doctype html><input type="file" aria-label="Attach photos" accept="image/*"><input type="file" aria-label="Attach files"><div data-composer-attachments></div><script>document.querySelector('[aria-label="Attach files"]').addEventListener('change', async event => { const file = event.target.files[0]; document.querySelector('[data-composer-attachments]').textContent = file.name; document.querySelector('[data-composer-attachments]').dataset.content = await file.text(); });</script>` : "<!doctype html><h1>Sign in</h1>"
+        ? signedIn ? `<!doctype html><form><div ${startupDelay ? 'data-composer-markdown role="textbox"' : 'id="prompt-textarea"'} contenteditable="true"></div><input type="file" aria-label="Attach photos" accept="image/*"><input type="file" aria-label="Attach files"><div ${startupDelay ? 'data-test-attachments' : 'data-composer-attachments'}></div></form><script>const composer = document.querySelector("[contenteditable]"); composer.contentEditable = "false"; setTimeout(() => composer.contentEditable = "true", ${startupDelay});document.querySelector('[aria-label="Attach files"]').addEventListener('change', async event => { const file = event.target.files[0]; if (${uploadError}) { const alert = document.createElement("div"); alert.setAttribute("role", "alert"); alert.textContent = "Unable to find " + file.name; document.body.append(alert); return; } document.querySelector('[data-test-attachments], [data-composer-attachments]').textContent = file.name; document.querySelector('[data-test-attachments], [data-composer-attachments]').dataset.content = await file.text(); });</script>` : "<!doctype html><h1>Welcome</h1><button>Log in</button>"
         : "<!doctype html><h1>Unrelated tab</h1>" });
     });
 
@@ -46,6 +48,7 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
       ["email", "https://mail.google.com/mail/u/0/#inbox/selected-email", /Read the uploaded newsletter reading batch/],
       ["Economist", "https://www.economist.com/weeklyedition/2026-09-26", /Read the uploaded Economist issue/]
     ]) {
+      startupDelay = publication === "email" ? 11000 : 0;
       await t.test(`attaches ${publication} content and copies its prompt`, async () => {
         const article = `## Example\n\nExact collected content: 100% — café.\n${"Long article text. ".repeat(10000)}`;
         const content = `# ${publication} batch\n\nSource: ${sourceUrl}\n\n## Contents\n\n- [Example](#article-1)\n\n---\n\n<a id="article-1"></a>\n\n${article}\n`;
@@ -72,7 +75,7 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
         await popup.close();
         await chat.getByRole("status").waitFor({ timeout: 15000 });
         assert.match(await chat.getByRole("status").textContent(), /Reading batch attached/);
-        const attached = await chat.locator("[data-composer-attachments]").getAttribute("data-content");
+        const attached = await chat.locator("[data-test-attachments], [data-composer-attachments]").getAttribute("data-content");
         assert.equal(attached, content);
         await context.grantPermissions(["clipboard-read"], { origin: "https://chatgpt.com" });
         assert.match(await chat.evaluate(async () => await navigator.clipboard.readText()), promptPattern);
@@ -94,7 +97,30 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
       await popup.bringToFront();
       await popup.getByRole("button", { name: "Open in ChatGPT" }).click();
 
-      await chat.getByRole("status").filter({ hasText: "Automatic attachment unavailable" }).waitFor({ timeout: 15000 });
+      await chat.getByRole("status").filter({ hasText: "Automatic attachment unavailable" }).waitFor({ timeout: 35000 });
+      assert.match(await chat.getByRole("status").textContent(), /showing a sign-in control/);
+      await popup.waitForFunction(() => document.querySelector("#status").textContent.includes("showing a sign-in control"));
+      await chat.close();
+      await popup.close();
+    });
+
+    await t.test("preserves ChatGPT upload errors in the panel and log", async () => {
+      signedIn = true;
+      startupDelay = 0;
+      uploadError = true;
+      const popup = await context.newPage();
+      await popup.goto(`chrome-extension://${extensionId}/popup.html`);
+      await popup.evaluate(() => { chrome.permissions.request = async () => true; });
+      const chat = await context.newPage();
+      await chat.goto("https://chatgpt.com/");
+      await popup.bringToFront();
+      await popup.getByRole("button", { name: "Open in ChatGPT" }).click();
+      await chat.getByRole("status").waitFor();
+      assert.match(await chat.getByRole("status").textContent(), /ChatGPT reported: Unable to find reading-batch.md/);
+      assert.doesNotMatch(await chat.getByRole("status").textContent(), /Sign in/);
+      await popup.waitForFunction(() => document.querySelector("#status").textContent.includes("Unable to find"));
+      const log = await worker.evaluate(async () => (await chrome.storage.local.get("latestLog")).latestLog);
+      assert.match(log, /ChatGPT handoff failed:.*Unable to find reading-batch.md/);
       await chat.close();
       await popup.close();
     });

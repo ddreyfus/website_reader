@@ -39,7 +39,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         checkLoaded();
       });
       const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: attachBatch, args: [content, state.filename] });
-      sendResponse(result ? { ok: true } : { ok: false, error: "ChatGPT opened, but automatic attachment was unavailable. Attach the Markdown manually; the matching prompt is copied." });
+      if (!result?.ok) await appendLog(`ChatGPT handoff failed: ${result?.error || "No attachment result returned."}`);
+      sendResponse(result || { ok: false, error: "ChatGPT returned no attachment result. Attach the Markdown manually; the prompt is copied." });
     })().catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
     return true;
   }
@@ -228,31 +229,50 @@ async function attachBatch(content, filename) {
     document.body.append(element);
     setTimeout(() => element.remove(), 20000);
   }
-  async function waitFor(find) {
+  const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== "hidden";
+  const needsLogin = () => [...document.querySelectorAll('button, a')].some(element => visible(element)
+    && /^(?:log in|sign in)$/i.test(element.textContent.trim()));
+  const composerSelector = '[data-composer-markdown][role="textbox"][contenteditable="true"], #prompt-textarea[contenteditable="true"], textarea#prompt-textarea, textarea[name="prompt-textarea"]';
+  async function waitFor(find, failure) {
     const existing = find();
     if (existing) return existing;
     return await new Promise((resolve, reject) => {
       const observer = new MutationObserver(() => {
-        const found = find();
-        if (found) { clearTimeout(timeout); observer.disconnect(); resolve(found); }
+        try {
+          const found = find();
+          if (found) { clearTimeout(timeout); observer.disconnect(); resolve(found); }
+        } catch (error) { clearTimeout(timeout); observer.disconnect(); reject(error); }
       });
-      const timeout = setTimeout(() => { observer.disconnect(); reject(new Error("ChatGPT's attachment control is unavailable.")); }, 10000);
-      observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+      const timeout = setTimeout(() => { observer.disconnect(); reject(new Error(failure())); }, 30000);
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
     });
   }
   try {
-    const input = await waitFor(() => document.querySelector('input[type="file"][aria-label="Attach files"]')
-      || [...document.querySelectorAll('input[type="file"]')].find((element) => !element.accept && !element.disabled));
+    const input = await waitFor(() => {
+      const composer = document.querySelector(composerSelector);
+      if (!composer || !visible(composer) || composer.disabled || composer.readOnly || composer.getAttribute("aria-disabled") === "true") return;
+      return document.querySelector('input[type="file"][aria-label="Attach files"]:not(:disabled)')
+        || [...document.querySelectorAll('input[type="file"]')].find(element => !element.accept && !element.disabled);
+    }, () => needsLogin() ? "ChatGPT is showing a sign-in control. Sign in, then retry Open in ChatGPT."
+      : "ChatGPT's composer or attachment control did not become ready within 30 seconds. Retry Open in ChatGPT or attach the Markdown manually.");
     const files = new DataTransfer();
     files.items.add(new File([content], filename, { type: "text/markdown" }));
     input.files = files.files;
     input.dispatchEvent(new Event("change", { bubbles: true }));
-    await waitFor(() => document.querySelector('[data-composer-attachments]')?.textContent.includes(filename));
+    await waitFor(() => {
+      const uploadError = [...document.querySelectorAll('[role="alert"]')].find(element => visible(element)
+        && (element.textContent.includes(filename) || /upload|file|attach/i.test(element.textContent)));
+      if (uploadError) throw new Error(`ChatGPT reported: ${uploadError.textContent.trim()}`);
+      const attachments = document.querySelector('[data-composer-attachments]') || document.querySelector(composerSelector)?.closest('form');
+      return attachments?.textContent.includes(filename) || [...(attachments?.querySelectorAll('[title], [aria-label]') || [])]
+        .some(element => element.getAttribute('title') === filename || element.getAttribute('aria-label') === filename);
+    }, () => "The file was handed to ChatGPT, but its attachment could not be confirmed within 30 seconds. Check the draft before retrying or attaching manually.");
     notice("Reading batch attached. Paste the copied digest prompt and send when ready.");
-    return true;
+    return { ok: true };
   } catch (error) {
-    notice(`Automatic attachment unavailable. Sign in if needed and attach ${filename} manually. The digest prompt is copied.`);
-    return false;
+    const message = `Automatic attachment unavailable. ${error.message || String(error)} File: ${filename}. The digest prompt is copied.`;
+    notice(message);
+    return { ok: false, error: message };
   }
 }
 

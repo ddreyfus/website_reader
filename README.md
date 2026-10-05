@@ -116,7 +116,7 @@ The log records cataloging, request timing, response status, extraction results,
 
 After a collection finishes, select **Open in ChatGPT**. This works from any active tab and uses the most recently completed batch, whether it came from Gmail or a supported publication. Chrome asks for optional access to `chatgpt.com` so Website Reader can attach the file.
 
-The action copies the prompt for the saved batch's source, opens a new ChatGPT web chat, and attaches the exact generated Markdown. Paste the prompt and submit when ready. It does not submit a message automatically. The original download remains available.
+The action copies the prompt for the saved batch's source, opens a new ChatGPT web chat, and attaches the exact generated Markdown. It waits up to 30 seconds for an editable composer and enabled attachment control. Startup, sign-in, upload, and unconfirmed-attachment failures are reported in the panel; attachment failures are also saved in the log. If confirmation times out, check the draft before retrying to avoid duplicate attachments. Paste the prompt and submit when ready. It does not submit a message automatically. The original download remains available.
 
 This targets the ChatGPT website. The official ChatGPT browser extension's side chat has no cross-extension upload listener in the inspected version (1.26.901.11451), so Website Reader cannot directly attach a file inside that separate panel. If ChatGPT requires sign-in, its attachment UI changes, or access is declined, attach the downloaded file manually; the prompt is still copied. The automatic attachment rebuilds the document from the saved collection, so clearing download history does not prevent handoff.
 

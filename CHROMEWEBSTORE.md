@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — Website Reader
 
-Last updated: 2026-09-30. Local development draft; no submission requested.
+Last updated: 2026-10-05. Local development draft; no submission requested.
 
 Free Press digests collect only Free Press articles. External email links and externally redirected sources are excluded from article extraction.
 
@@ -59,6 +59,8 @@ Local unpacked installation only. Publisher, public contact, support URL, distri
 
 | Version | Date | Changes | Status |
 |---|---|---|---|
+| 0.1.0 | 2026-10-05 | Recognize the current ChatGPT composer without relying on its former element ID. | Local draft |
+| 0.1.0 | 2026-10-04 | ChatGPT handoff waits for the composer to become ready and distinguishes sign-in, upload, and attachment-confirmation failures. | Local draft |
 | 0.1.0 | 2026-09-30 | Gmail newsletter collection, provenance-aware digest prompt, and optional ChatGPT handoff. Readable articles no longer pause merely because a background security script is present. | Local draft |
 
 ## Review notes
