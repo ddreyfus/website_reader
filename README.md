@@ -41,6 +41,11 @@ Website Reader supports all issue pages under:
 
 ## Test
 
+The local MCP hello-world experiment has separate
+[tunnel setup and troubleshooting instructions](local-mcp-setup.md), including
+`npm run mcp:start`, `npm run mcp:stop`, and `npm run mcp:status`. Its archive design
+is recorded in [the local reading archive plan](local-reading-archive-plan.md).
+
 Install the test dependency and Chromium once:
 
 ```sh
