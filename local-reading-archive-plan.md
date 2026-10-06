@@ -193,3 +193,5 @@ separate indexes. Search filters selected directory scopes before ranking;
 parents include descendants. The default is 30 passages, configurable through
 `search_limit` or a per-call limit. Reads and clickable browser links locate
 exact indexed passages and return bounded document sections with pagination.
+
+Document/article inventory is implemented: MCP `list_documents` enumerates scoped indexed files with filename filtering; `list_articles` enumerates collected anchors or labelled generic Markdown headings. Both paginate independently of lexical search and expose read/viewer locations. Complete topical classification still requires reading captured content.

@@ -16,7 +16,7 @@ test("local MCP discovers and calls hello over stdio", { timeout: 10000 }, async
       args: [fileURLToPath(new URL("../scripts/mcp-archive.mjs", import.meta.url))],
     }));
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map(tool => tool.name).sort(), ["hello", "list_corpora", "read_document", "search_archive"]);
+    assert.deepEqual(tools.map(tool => tool.name).sort(), ["hello", "list_articles", "list_corpora", "list_documents", "read_document", "search_archive"]);
     assert.ok(tools.every(tool => tool.annotations.readOnlyHint));
     const challenge = crypto.randomUUID();
     const started = Date.now();
@@ -41,6 +41,10 @@ test("archive MCP discovers corpora, forwards scopes, reads context, and reports
     response.setHeader("Content-Type", "application/json");
     if (request.url.startsWith("/api/v1/corpora")) {
       response.end(JSON.stringify({ corpora: [{ id: "parent", parent_id: null }, { id: "child", parent_id: "parent" }] }));
+    } else if (request.url.startsWith("/api/v1/documents?")) {
+      response.end(JSON.stringify({ documents: [{ document_id: "doc", url: "/file/doc" }], total: 2, next_offset: 1 }));
+    } else if (request.url.startsWith("/api/v1/documents/doc/articles?")) {
+      response.end(JSON.stringify({ articles: [{ title: "Article", kind: "article", line_start: 7, url: "/file/doc?line=7" }], total: 1, next_offset: null }));
     } else if (request.url === "/api/v1/archive/search") {
       response.end(JSON.stringify({ results: [{ document_id: "doc", text: "matching passage", url: "/file/doc?line=7" }] }));
     } else if (request.url.startsWith("/api/v1/documents/doc?")) {
@@ -65,6 +69,15 @@ test("archive MCP discovers corpora, forwards scopes, reads context, and reports
       return JSON.parse(response.content[0].text);
     };
     assert.equal((await call("list_corpora", {})).corpora[1].parent_id, "parent");
+    const documents = await call("list_documents", { corpus_id: "child", path_contains: "Economist", offset: 1, limit: 2 });
+    assert.equal(documents.next_offset, 1);
+    assert.equal(documents.documents[0].url, `http://127.0.0.1:${backend.address().port}/file/doc`);
+    assert.match(requests.at(-1).url, /corpus_id=child/);
+    assert.match(requests.at(-1).url, /path_contains=Economist/);
+    assert.match(requests.at(-1).url, /offset=1/);
+    const articles = await call("list_articles", { document_id: "doc", limit: 1 });
+    assert.equal(articles.articles[0].line_start, 7);
+    assert.equal(articles.articles[0].url, `http://127.0.0.1:${backend.address().port}/file/doc?line=7`);
     await call("search_archive", { query: "default count" });
     assert.equal(requests.at(-1).body.limit, 7);
     const search = await call("search_archive", { query: "repeated idea", corpus_ids: ["child"], limit: 2 });

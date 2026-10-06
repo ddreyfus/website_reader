@@ -29,6 +29,8 @@ import (
 func RegisterRetrievalHandlers(router *gin.Engine) {
 	router.GET("/api/v1/corpora", listCorpora)
 	router.POST("/api/v1/archive/search", searchArchive)
+	router.GET("/api/v1/documents", listDocuments)
+	router.GET("/api/v1/documents/:id/articles", listArticles)
 	router.GET("/api/v1/documents/:id", readDocument)
 	router.GET("/file/:id", readDocument)
 }

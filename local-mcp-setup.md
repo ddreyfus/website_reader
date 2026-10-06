@@ -225,6 +225,14 @@ archive MCP server and Bleve service remain separate processes.
 
 The tunnel profile launches `scripts/mcp-archive.mjs`. The server advertises:
 
+- `list_documents`: enumerate indexed files without a search query, optionally
+  scoped by corpus (including descendants) or a case-insensitive `path_contains`
+  filter. Results sort by path and document ID, with total count and pagination.
+- `list_articles`: enumerate a document's collected article anchors and original
+  email unit in source order, with titles, line/byte ranges, and browser links.
+  Other Markdown exposes ATX headings labelled `kind=heading`; plain text may
+  have no headings. This inventories captured units, not unavailable content.
+
 - `list_corpora`: directory hierarchy, stable corpus IDs, parent IDs, recursive
   document counts, and indexing status. Empty roots are omitted by default.
 - `search_archive`: query the whole configured archive, or pass corpus IDs to
