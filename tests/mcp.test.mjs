@@ -13,7 +13,7 @@ test("local MCP discovers and calls hello over stdio", { timeout: 10000 }, async
   try {
     await client.connect(new StdioClientTransport({
       command: process.execPath,
-      args: [fileURLToPath(new URL("../scripts/mcp-hello.mjs", import.meta.url))],
+      args: [fileURLToPath(new URL("../scripts/mcp-archive.mjs", import.meta.url))],
     }));
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map(tool => tool.name).sort(), ["hello", "list_corpora", "read_document", "search_archive"]);
@@ -56,7 +56,7 @@ test("archive MCP discovers corpora, forwards scopes, reads context, and reports
   const client = new Client({ name: "archive-test", version: "0.1.0" });
   try {
     await client.connect(new StdioClientTransport({ command: process.execPath,
-      args: [fileURLToPath(new URL("../scripts/mcp-hello.mjs", import.meta.url))],
+      args: [fileURLToPath(new URL("../scripts/mcp-archive.mjs", import.meta.url))],
       env: { ...process.env, LOCAL_MCP_CONFIG: config },
     }));
     const call = async (name, args) => {

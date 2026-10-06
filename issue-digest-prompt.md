@@ -24,6 +24,22 @@ Do not delegate article processing to an external workflow or require separate A
 
 Preserve the issue's section order and article order.
 
+Read the Markdown directly where possible. Use Python only when necessary to access or process the file. Do not narrate routine file inspection or reproduce code, parsing output, raw tool responses, or intermediate data; present findings and citations.
+
+## Comparison with the reading archive
+
+Assume that material in my local reading archive has been read. After assessing each article on its own evidence, use **Website Reader Local** to compare its main ideas with archived content. This comparison is explicitly permitted; archived material must not fill gaps in the article's evidence or change what you attribute to its author.
+
+Use `list_corpora` to discover relevant sources. Before searching, generate a small set of distinct queries covering the main claims, synonyms, expanded acronyms, related concepts, named entities, and likely terminology in older articles. For example, AI coverage may require queries about artificial intelligence, language models, data centres, chips, automation, agents, productivity, and OpenAI; select terms relevant to the actual question. A standalone two-character query such as “AI” produces no trigrams, so expand it.
+
+Run these focused queries separately through `search_archive` within the relevant scope, rather than relying on one broad query or one top-30 list. Combine the hits, deduplicate by chunk ID, group by document, and use `read_document` to inspect promising matches in context. Scores from different queries are not directly comparable; use repeated retrieval and substantive relevance to choose what to read. Refine queries using terminology found in the matches, and search across the archive when source-specific searches are insufficient. Search scores measure lexical overlap, not whether two passages express the same idea. Confirm substantive overlap before calling an idea familiar. Keep query planning and merging out of the digest unless requested.
+
+For requests for all articles on a topic, distinguish a search-based selection from a complete inventory. Query expansion improves coverage but does not establish completeness; a complete inventory requires examining every relevant document's article headings and content.
+
+The uploaded issue may already be indexed. Exclude the article being assessed and identical copies of that article from its comparison evidence; a self-match does not establish overlap with other reading. Compare ideas rather than shared boilerplate or source names.
+
+Keep the comparison concise: **Already in the archive:** identify overlapping ideas with links to supporting archived documents. **Ideas not found in the archive:** identify the remaining ideas, new evidence, or changed conclusions. If appropriate, say “This document contains content that's in the archive; the ideas not found there are …”. If nothing additional is found, say so. “Not found” describes the searches performed, not proof of originality. If the archive tools are unavailable, say the comparison could not be completed rather than claiming novelty.
+
 ## Summaries
 
 Use the shortest summary that adequately captures the article. **Two sentences or fewer should be the default; do not use five sentences merely because five are allowed.**
@@ -88,6 +104,8 @@ Add a short section identifying articles that appear particularly worth closer r
 - an interesting gap between claim and evidence;
 - genuine uncertainty;
 - an argument that would benefit from closer examination.
+
+Use the archive comparison to prioritize articles that add ideas or evidence beyond archived material, and identify those that largely repeat it.
 
 Cross-article comparison and synthesis belong here, **not in the individual article-analysis stage**.
 

@@ -13,7 +13,7 @@ npm run test:mcp
 
 The test launches the actual server over stdio, discovers its tools, and calls
 `hello` with a random challenge. This verifies local MCP operation, not ChatGPT
-connectivity. `npm run mcp:hello` starts the server and waits for MCP messages on
+connectivity. `npm run mcp:serve` starts the server and waits for MCP messages on
 stdin; it is not an interactive shell command that prints a greeting immediately.
 
 ## ChatGPT tunnel verification
@@ -65,11 +65,11 @@ access to a tunnel created in a different personal organization.
 ```sh
 .local-mcp/bin/tunnel-client init \
   --sample sample_mcp_stdio_local \
-  --profile website-reader-hello \
+  --profile website-reader-archive \
   --profile-dir "$PWD/.local-mcp/profiles" \
   --tunnel-id tunnel_REPLACE_WITH_YOUR_ID \
   --control-plane-api-key-ref "file:$HOME/.local-mcp/runtime-key" \
-  --mcp-command "$(command -v node) $PWD/scripts/mcp-hello.mjs"
+  --mcp-command "$(command -v node) $PWD/scripts/mcp-archive.mjs"
 ```
 
 5. Save the runtime key privately, then validate and run the profile. For an
@@ -85,9 +85,9 @@ printf '%s' "$READER_TUNNEL_KEY" > "$HOME/.local-mcp/runtime-key"
 chmod 600 "$HOME/.local-mcp/runtime-key"
 unset READER_TUNNEL_KEY
 .local-mcp/bin/tunnel-client doctor \
-  --profile website-reader-hello --profile-dir "$PWD/.local-mcp/profiles" --explain
+  --profile website-reader-archive --profile-dir "$PWD/.local-mcp/profiles" --explain
 .local-mcp/bin/tunnel-client run \
-  --profile website-reader-hello --profile-dir "$PWD/.local-mcp/profiles"
+  --profile website-reader-archive --profile-dir "$PWD/.local-mcp/profiles"
 ```
 
 6. While the client is running, open [ChatGPT Plugins](https://chatgpt.com/plugins),
@@ -132,7 +132,7 @@ tunnel ID, credential reference, and stdio command. It then displays runtime
 status; check that the runtime is running, healthy, and ready. Stop ends the local
 runtime and its MCP subprocess without deleting the remote tunnel or profile.
 Starting again reconnects it. Start requires the key file and does not print its
-contents. These commands use the alias `website-reader-hello`.
+contents. These commands use the alias `website-reader-archive`.
 
 The managed runtime writes local state, locks, logs, and health discovery under
 `~/Library/Application Support/tunnel-client/`. Codex's filesystem sandbox needed
@@ -144,13 +144,13 @@ the initial profile's port 8080 remains in use. Obtain the current `ui_url` and
 `process_running`, `healthy`, and `ready` values with:
 
 ```sh
-.local-mcp/bin/tunnel-client runtimes status website-reader-hello --json
+.local-mcp/bin/tunnel-client runtimes status website-reader-archive --json
 ```
 
 Runtime logs are at
-`~/Library/Application Support/tunnel-client/logs/website-reader-hello.log`.
+`~/Library/Application Support/tunnel-client/logs/website-reader-archive.log`.
 The health URL discovery file is at
-`~/Library/Application Support/tunnel-client/health/website-reader-hello.url`.
+`~/Library/Application Support/tunnel-client/health/website-reader-archive.url`.
 The JSON status includes diagnostic log excerpts; review them before sharing.
 
 Stop any foreground `tunnel-client run` session with Ctrl-C before switching to
@@ -219,12 +219,11 @@ The Bleve service reads `~/.local-mcp/config.json`, beside `runtime-key`, for
 its startup port, archive root, and `index_directories` list. The key stays in its separate file; the
 extension settings API never reads it. See [Bleve setup](lexical-search/README.md)
 for extension controls, restart behavior, and development overrides. The tunnel
-hello server and Bleve service remain separate processes.
+archive MCP server and Bleve service remain separate processes.
 
 ## Archive tools
 
-The existing tunnel profile still launches `scripts/mcp-hello.mjs`; its filename
-is retained so saved profiles keep working. The server now advertises:
+The tunnel profile launches `scripts/mcp-archive.mjs`. The server advertises:
 
 - `list_corpora`: directory hierarchy, stable corpus IDs, parent IDs, recursive
   document counts, and indexing status. Empty roots are omitted by default.

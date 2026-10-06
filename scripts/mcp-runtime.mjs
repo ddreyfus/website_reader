@@ -6,7 +6,7 @@ import { parse } from "yaml";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const binary = `${root}.local-mcp/bin/tunnel-client`;
 const profileDir = `${root}.local-mcp/profiles`;
-const alias = "website-reader-hello";
+const alias = "website-reader-archive";
 const action = process.argv[2];
 
 try {
