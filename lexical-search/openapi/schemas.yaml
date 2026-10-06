@@ -1,0 +1,213 @@
+# @format
+
+Error:
+  type: object
+  required:
+    - detail
+  properties:
+    id:
+      type: string
+      format: uuid
+    links:
+      type: object
+      properties:
+        about:
+          type: string
+    status:
+      type: string
+    code:
+      type: string
+    title:
+      type: string
+    detail:
+      description: A human-readable explanation specific to this occurrence of the problem.
+      type: string
+
+ErrorsResponse:
+  type: object
+  required:
+    - errors
+  properties:
+    errors:
+      type: array
+      items:
+        $ref: "#/Error"
+
+Workspace:
+  type: object
+  required:
+    - id
+    - name
+    - bleveDir
+    - gitDir
+    - workTree
+    - docCount
+    - archiveDBVersion
+    - lastIndexedCommit
+    - createdAt
+    - updatedAt
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: The workspace id
+    name:
+      type: string
+      description: The workspace name
+    bleveDir:
+      type: string
+      description: The abs path of the bleve index
+    gitDir:
+      type: string
+      description: The abs path of the .git folder
+    workTree:
+      type: string
+      description: The abs path of the workspace folder
+    docCount:
+      type: integer
+      description: The number of documents in the bleve index
+    archiveDBVersion:
+      type: integer
+      description: The version of the archive database
+    lastIndexedCommit:
+      type: string
+      description: The commit hash of the last successfully indexed commit
+    createdAt:
+      type: string
+      format: date-time
+    updatedAt:
+      type: string
+      format: date-time
+
+WorkspacesResponse:
+  type: object
+  required:
+    - workspaces
+  properties:
+    workspaces:
+      type: array
+      items:
+        $ref: "#/Workspace"
+
+CreateWorkspaceRequest:
+  type: object
+  required:
+    - name
+    - workTree
+  properties:
+    name:
+      type: string
+      description: The workspace name
+    workTree:
+      type: string
+      description: The absolute workspace path
+      example: /path/to/workspace
+
+DeleteWorkspaceRequest:
+  type: object
+  required:
+    - id
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: The workspace id
+
+Document:
+  type: object
+  required:
+    - id
+    - path
+    - lineStart
+    - lineEnd
+    - text
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: A unique identifier for the document
+    path:
+      type: string
+      description: The path to the parent file relative to the workspace
+    lineStart:
+      type: string
+      pattern: '^\d+$'
+      description: The line number of the first line of text (as a string)
+    lineEnd:
+      type: string
+      pattern: '^\d+$'
+      description: The line number of the last line of text (as a string)
+    text:
+      type: string
+      description: The text of the document
+
+SearchRequest:
+  type: object
+  required:
+    - id
+    - databases
+    - query
+    - limit
+  properties:
+    id:
+      type: string
+      description: The index id
+      pattern: "^[a-f0-9]{64}$"
+    databases:
+      type: array
+      items:
+        $ref: "#/MontyDatabase"
+      description: A list of Monty databases
+    query:
+      type: string
+      description: The search query
+    limit:
+      type: integer
+      description: The maximum number of results to return
+
+SearchResult:
+  type: object
+  required:
+    - document
+    - score
+  properties:
+    document:
+      $ref: "#/Document"
+    score:
+      type: number
+      description: The score of the document
+
+SearchResponse:
+  type: object
+  required:
+    - results
+  properties:
+    results:
+      type: array
+      items:
+        $ref: "#/SearchResult"
+
+MontyDatabaseUsageMode:
+  type: string
+  enum:
+    - always
+    - onRequest
+
+MontyDatabase:
+  type: object
+  required:
+    - name
+    - folders
+    - usageMode
+  properties:
+    name:
+      type: string
+      description: The name of the Monty database
+    folders:
+      type: array
+      items:
+        type: string
+      description: A list of folders associated with the Monty database
+    usageMode:
+      $ref: "#/MontyDatabaseUsageMode"
+      description: The usage mode of the Monty database

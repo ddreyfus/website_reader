@@ -1,0 +1,13 @@
+openapi: 3.1.0
+info:
+  title: Monty Lexical Search API
+  description: A REST API for building and querying lexical search indices
+  version: 1.0.0
+servers:
+  - url: http://0.0.0.0:42059/api/v1
+paths:
+  $ref: "./paths.yaml"
+components:
+  schemas:
+    $ref: "./schemas.yaml"
+security: []

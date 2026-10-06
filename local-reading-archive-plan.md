@@ -16,9 +16,10 @@ files.
 
 ## Existing infrastructure and decisions
 
-- Reuse Bleve from `/Users/david/PycharmProjects/python-programmer/lexical-search`
-  where practical. It already indexes chunks with paths and line ranges and
-  searches across workspace indexes through an index alias.
+- Keep the Bleve service in this repository under `lexical-search/`, adapted
+  from python-programmer. Building and running requires no other checkout.
+  Preserve its existing API, chunk paths and line ranges, and workspace index
+  aliases; see `lexical-search/README.md` for provenance and setup.
 - Start with lexical retrieval. Bleve supports vector and hybrid retrieval, but
   embeddings, FAISS setup, and semantic chunking are separate work. Add them if
   evaluation shows lexical retrieval misses important paraphrases.
@@ -168,7 +169,7 @@ opener is the agreed initial approach.
 5. **Summary maintenance:** Verify incremental updates, citations, stale-state
    reporting, failure recovery, and reconstruction from source material.
 
-Remaining decisions: reuse boundaries with `python-programmer`, conversation
+Remaining decisions: conversation
 import format, final archive location, summary worker/model, and update cadence.
 
 ## References
@@ -177,3 +178,18 @@ import format, final archive location, summary worker/model, and update cadence.
 - [Chrome downloads API](https://developer.chrome.com/docs/extensions/reference/api/downloads)
 - [Bleve vector search](https://github.com/blevesearch/bleve/blob/master/docs/vectors.md)
 - [Bleve hybrid score fusion](https://github.com/blevesearch/bleve/blob/master/docs/score_fusion.md)
+
+Shared service configuration is `~/.local-mcp/config.json`, beside the separate
+API key. The extension edits port and archive root through the loopback service;
+changes apply after restart and do not move existing archive files.
+
+`index_directories` selects automatic indexing roots. Startup, 10-second polling,
+and recursive filesystem notifications reconcile additions, edits, renames, and
+deletions. Missing roots retain their indexes until accessible again. Directory
+list changes take effect after restart; removing a root does not erase its index.
+
+Archive MCP retrieval now exposes directory corpora as a hierarchy without
+separate indexes. Search filters selected directory scopes before ranking;
+parents include descendants. The default is 30 passages, configurable through
+`search_limit` or a per-call limit. Reads and clickable browser links locate
+exact indexed passages and return bounded document sections with pagination.

@@ -7,6 +7,82 @@ const downloadLogButton = document.querySelector("#download-log");
 const status = document.querySelector("#status");
 const logOutput = document.querySelector("#log");
 
+const archiveConnectionPort = document.querySelector("#archive-connection-port");
+const archivePort = document.querySelector("#archive-port");
+const archiveRoot = document.querySelector("#archive-root");
+const archiveDirectories = document.querySelector("#archive-directories");
+const archiveSearchLimit = document.querySelector("#archive-search-limit");
+const archiveConfigStatus = document.querySelector("#archive-config-status");
+const archiveConfigFields = document.querySelector("#archive-config-fields");
+const archiveConnectButton = document.querySelector("#archive-connect");
+let connectedArchivePort;
+
+async function archiveConfigRequest(port, options = {}) {
+  const response = await fetch(`http://127.0.0.1:${port}/api/v1/config`, {
+    ...options, signal: AbortSignal.timeout(5000), cache: "no-store"
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `Service returned ${response.status}`);
+  return result;
+}
+
+archiveConnectButton.addEventListener("click", async () => {
+  if (!archiveConnectionPort.reportValidity()) return;
+  archiveConnectButton.disabled = true;
+  archiveConfigFields.disabled = true;
+  connectedArchivePort = undefined;
+  try {
+    const port = archiveConnectionPort.valueAsNumber;
+    const result = await archiveConfigRequest(port);
+    await chrome.storage.local.set({ archiveConnectionPort: port });
+    connectedArchivePort = port;
+    archivePort.value = result.port;
+    archiveRoot.value = result.archive_root;
+    archiveDirectories.value = (result.index_directories || []).join("\n");
+    archiveSearchLimit.value = result.search_limit ?? 30;
+    archiveConfigFields.disabled = false;
+    archiveConfigStatus.textContent = `Connected on port ${result.active_port}. Active archive: ${result.active_archive_root}.`;
+  } catch (error) {
+    archiveConfigStatus.textContent = `Could not connect: ${error.message}. Check the port and start the service.`;
+  } finally {
+    archiveConnectButton.disabled = false;
+  }
+});
+
+document.querySelector("#archive-config-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!connectedArchivePort) return;
+  archiveConnectButton.disabled = true;
+  archiveConfigFields.disabled = true;
+  try {
+    const result = await archiveConfigRequest(connectedArchivePort, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        port: archivePort.valueAsNumber, archive_root: archiveRoot.value.trim(),
+        index_directories: archiveDirectories.value.split(/\r?\n/).map(path => path.trim()).filter(Boolean),
+        search_limit: archiveSearchLimit.valueAsNumber
+      })
+    });
+    archiveConfigStatus.textContent = `Settings saved. Restart the service, then load settings on port ${result.port}. Existing files remain in their current folder.`;
+    archiveConnectionPort.value = result.port;
+  } catch (error) {
+    archiveConfigStatus.textContent = `Could not save settings: ${error.message}`;
+  } finally {
+    archiveConfigFields.disabled = false;
+    archiveConnectButton.disabled = false;
+  }
+});
+
+async function restoreArchiveConnectionPort() {
+  try {
+    const saved = await chrome.storage.local.get("archiveConnectionPort");
+    if (Number.isInteger(saved.archiveConnectionPort) && saved.archiveConnectionPort > 0 && saved.archiveConnectionPort <= 65535) {
+      archiveConnectionPort.value = saved.archiveConnectionPort;
+    }
+  } catch (error) { archiveConfigStatus.textContent = `Could not restore connection port: ${error.message}`; }
+}
+restoreArchiveConnectionPort();
+
 const emailSelect = document.querySelector("#email-message");
 const emailLabel = document.querySelector("#email-label");
 let emails = [];

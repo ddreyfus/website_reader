@@ -125,3 +125,10 @@ pre {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+#archive-settings label { display: block; margin-top: 12px; margin-bottom: 4px; }
+#archive-settings input, #archive-settings textarea { width: 100%; box-sizing: border-box; padding: 10px; font: inherit; font-size: 16px; border: 1px solid #cbd0c9; border-radius: 9px; }
+#archive-settings button { margin-top: 10px; }
+#archive-settings fieldset { margin: 16px 0 0; min-width: 0; border: 1px solid #cbd0c9; }
+#archive-settings p { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+#archive-settings input:focus-visible, #archive-settings textarea:focus-visible { outline: 3px solid #efb954; outline-offset: 2px; }

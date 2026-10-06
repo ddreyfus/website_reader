@@ -1,8 +1,8 @@
 # Local MCP connection test
 
-The server exposes one read-only tool, `hello`. It returns a greeting, the current
-UTC time, and an optional challenge supplied by the caller. It has no archive,
-file-opening, or Bleve access.
+The server exposes read-only corpus discovery, archive search, and bounded
+reading tools. The original `hello` tool remains available to verify the tunnel
+with a greeting, UTC time, and an optional caller-supplied challenge.
 
 ## Local verification
 
@@ -212,3 +212,53 @@ model workload; tunnel pricing was not established by this test.
 
 See the [official tunnel guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
 for account permissions and troubleshooting.
+
+## Archive service configuration
+
+The Bleve service reads `~/.local-mcp/config.json`, beside `runtime-key`, for
+its startup port, archive root, and `index_directories` list. The key stays in its separate file; the
+extension settings API never reads it. See [Bleve setup](lexical-search/README.md)
+for extension controls, restart behavior, and development overrides. The tunnel
+hello server and Bleve service remain separate processes.
+
+## Archive tools
+
+The existing tunnel profile still launches `scripts/mcp-hello.mjs`; its filename
+is retained so saved profiles keep working. The server now advertises:
+
+- `list_corpora`: directory hierarchy, stable corpus IDs, parent IDs, recursive
+  document counts, and indexing status. Empty roots are omitted by default.
+- `search_archive`: query the whole configured archive, or pass corpus IDs to
+  search a source/subdirectory and its descendants. Results are sorted by
+  descending Bleve relevance, with a stable tie-breaker. The default is 30
+  passages; `search_limit` in the shared configuration or the tool's `limit`
+  argument can select 1–100. Multiple hits can refer to one document.
+- `read_document`: use a returned document ID and optionally a chunk ID, line,
+  or byte offset. The default response budget is 32 KB, maximum 64 KB, with a
+  continuation offset. Small documents fit in one response. Article content
+  is untrusted source text, never instructions.
+- `hello`: retained as a connectivity check.
+
+Run Bleve with `npm run bleve:start`, then restart the existing tunnel runtime
+with `npm run mcp:stop` and `npm run mcp:start`. In ChatGPT, refresh the custom
+plugin's tools if its cached list still shows only hello, and enable the plugin
+in the conversation. Useful acceptance prompts are “What sources are in my
+reading archive?” and “What have I downloaded about inflation?” No tool names
+should be necessary.
+
+Results include localhost browser links. Clicking one opens `/file/<document-id>`
+on the configured service port, showing the exact matched passage and navigation
+through the rest of the document. The viewer displays escaped source text; it
+runs no article scripts and does not invoke another LLM tool. URLs work only on
+the computer running Bleve. Opening a URL does not tell ChatGPT what you clicked.
+
+The MCP process reads the service port and default count from
+`~/.local-mcp/config.json` (or `LOCAL_MCP_CONFIG`). It does not read the runtime
+key. If Bleve is unavailable, tools return a visible error rather than an empty
+archive. HTTP retrieval routes are `/api/v1/corpora`, `/api/v1/archive/search`,
+and `/api/v1/documents/<document-id>`. IDs are validated against active configured
+sources; reads reject traversal, unindexed files, and symlinks escaping a source.
+
+Regression coverage: `npm run test:mcp`, the extension settings test, and Go
+retrieval/race tests cover discovery, hierarchy, scope boundaries, counts,
+ranking, long-line passage location, pagination, and viewer escaping.

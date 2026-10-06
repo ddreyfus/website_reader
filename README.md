@@ -155,3 +155,5 @@ The extension requests:
 - **An article was skipped:** Check the log for its URL and failure reason. Collection continues automatically with the remaining articles.
 - **The copied text does not include the issue:** This is intentional. Upload the downloaded Markdown to the AI chat separately, then paste the copied digest prompt.
 - **Recent code changes do not appear:** Reload the unpacked extension from `chrome://extensions`, then reopen its popup.
+
+The self-contained [Bleve search service](lexical-search/README.md) provides local chunk indexing and search for the archive.

@@ -1,0 +1,170 @@
+# @format
+
+/workspaces:
+  get:
+    summary: Returns a list of workspaces
+    operationId: listWorkspaces
+    parameters:
+      - name: workTree
+        in: query
+        description: The workspace path
+        required: false
+        schema:
+          type: string
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/WorkspacesResponse"
+      "400":
+        description: Bad Request
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+      "500":
+        description: Internal Server Error
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+  post:
+    summary: Create a new workspace
+    operationId: createWorkspace
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: "./schemas.yaml#/CreateWorkspaceRequest"
+    responses:
+      "201":
+        description: Created
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/WorkspacesResponse"
+      "400":
+        description: Bad Request
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+      "409":
+        description: Conflict
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+      "500":
+        description: Internal Server Error
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+  delete:
+    summary: Delete a workspace if it exists
+    operationId: deleteWorkspace
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: "./schemas.yaml#/DeleteWorkspaceRequest"
+    responses:
+      "204":
+        description: No Content
+      "400":
+        description: Bad Request
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+      "500":
+        description: Internal Server Error
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+
+/updates:
+  get:
+    summary: Stream archive updates (SSE) for a workspace
+    operationId: streamUpdates
+    parameters:
+      - name: id
+        in: query
+        description: The workspace id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: A list of Monty databases
+      required: true
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: "./schemas.yaml#/MontyDatabase"
+    responses:
+      "200":
+        description: OK
+        content:
+          text/event-stream:
+            schema:
+              type: string
+      "400":
+        description: Bad Request
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+      "404":
+        description: Not Found
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+      "500":
+        description: Internal Server Error
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+
+/search:
+  post:
+    summary: Search an index
+    operationId: search
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: "./schemas.yaml#/SearchRequest"
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/SearchResponse"
+      "400":
+        description: Bad Request
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+      "404":
+        description: Not Found
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"
+      "500":
+        description: Internal Server Error
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas.yaml#/ErrorsResponse"

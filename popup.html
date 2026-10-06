@@ -31,6 +31,30 @@
         <button id="download-log" type="button" disabled>Download latest log</button>
       </div>
 
+      <details id="archive-settings">
+        <summary>Local archive settings</summary>
+        <label for="archive-connection-port">Connect to port</label>
+        <input id="archive-connection-port" type="number" min="1" max="65535" step="1" value="8766" required>
+        <button id="archive-connect" type="button">Load settings</button>
+        <form id="archive-config-form">
+          <fieldset id="archive-config-fields" disabled>
+            <legend>Service configuration</legend>
+            <label for="archive-port">Port after restart</label>
+            <input id="archive-port" name="port" type="number" min="1" max="65535" step="1" required>
+            <label for="archive-root">Archive folder</label>
+            <input id="archive-root" name="archive_root" type="text" maxlength="2048" required aria-describedby="archive-config-help">
+            <label for="archive-directories">Directories to index (one per line)</label>
+            <textarea id="archive-directories" name="index_directories" rows="4" maxlength="2048" aria-describedby="archive-directories-help"></textarea>
+            <p id="archive-directories-help">Subdirectories are included. Use absolute paths or ~/folder. An empty list disables automatic indexing.</p>
+            <label for="archive-search-limit">Default search results</label>
+            <input id="archive-search-limit" name="search_limit" type="number" min="1" max="100" step="1" value="30" required>
+            <p id="archive-config-help">Use an absolute path or ~/folder. Saved changes take effect after restarting the service. Existing files are not moved.</p>
+            <button type="submit">Save settings</button>
+          </fieldset>
+        </form>
+        <p id="archive-config-status" role="status" aria-atomic="true">Start the local archive service, then load its settings.</p>
+      </details>
+
       <details>
         <summary>Latest detailed log</summary>
         <pre id="log">No collection has run yet.</pre>
