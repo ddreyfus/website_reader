@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"lexical-search/archive"
 	"lexical-search/config"
 )
 
@@ -136,6 +137,14 @@ func listArticles(c *gin.Context) {
 	if err != nil || !info.Mode().IsRegular() || !config.ContainsPath(workspace.WorkTree, resolved) {
 		ErrorHandler(c, fmt.Errorf("document is not a regular file within its source directory"), 403)
 		return
+	}
+	if archive.NeedsExtraction(path) {
+		resolved = archive.TextPath(&workspace, path)
+		info, err = os.Stat(resolved)
+		if err != nil {
+			ErrorHandler(c, fmt.Errorf("extracted text unavailable; wait for reconciliation"), 409)
+			return
+		}
 	}
 	file, err := os.Open(resolved)
 	if err != nil {

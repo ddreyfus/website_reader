@@ -195,3 +195,10 @@ parents include descendants. The default is 30 passages, configurable through
 exact indexed passages and return bounded document sections with pagination.
 
 Document/article inventory is implemented: MCP `list_documents` enumerates scoped indexed files with filename filtering; `list_articles` enumerates collected anchors or labelled generic Markdown headings. Both paginate independently of lexical search and expose read/viewer locations. Complete topical classification still requires reading captured content.
+
+PDF, Word (`.doc`, `.docx`, `.docm`) and HTML (`.html`, `.htm`) ingestion is implemented
+with Apache Tika. Generated UTF-8 text is retained beside each workspace index,
+with original paths remaining document identities. Per-file ingestion records and
+periodic reconciliation backfill skipped sources and repair mismatches between
+sources, cached text, SQLite chunks and Bleve passages. See `lexical-search/README.md`
+for Java/Tika setup, extraction limitations and integration tests.

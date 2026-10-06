@@ -12,7 +12,6 @@ const WORKSPACE_DB_VERSION = 1
 const ARCHIVE_DB_VERSION = 1
 
 const MAX_CHUNK_LENGTH = 4096
-const ARCHIVE_BATCH_SIZE = 128
 const FILE_CHUNK_LINES = 32
 
 var (
@@ -63,9 +62,6 @@ var IgnorePatterns = []string{
 	"*.7z",
 	"*.gz",
 	"*.rar",
-	"*.pdf",
-	"*.doc",
-	"*.docx",
 	"*.xls",
 	"*.xlsx",
 	"*.ppt",

@@ -282,7 +282,11 @@ func InitArchiveDB(archiveDBPath string) error {
 	if err != nil {
 		return err
 	}
-	defer archiveDB.Close()
+	defer func() {
+		if archiveDB != nil {
+			archiveDB.Close()
+		}
+	}()
 
 	_, err = archiveDB.Exec(fileChunksSchema)
 	if err != nil {
@@ -478,15 +482,6 @@ func ArchiveUpdateEventGenerator(ctx context.Context, wsr *WorkspaceRecord, even
 	}
 	log.Println("Checkpointed latest")
 
-	if len(files) == 0 {
-		emit(sse.Event{
-			SSEName: "updates.message",
-			SSEData: fmt.Sprintf("Archive is up to date: %s", wsr.WorkTree),
-		})
-
-		return
-	}
-
 	// open the archive db and bleve index
 	archiveDBPath := MakeArchiveDBPath(wsr.Id)
 	archiveDB, err := sqlx.Connect("sqlite", archiveDBPath)
@@ -494,14 +489,34 @@ func ArchiveUpdateEventGenerator(ctx context.Context, wsr *WorkspaceRecord, even
 		fail(err)
 		return
 	}
-	defer archiveDB.Close()
+	defer func() {
+		if archiveDB != nil {
+			archiveDB.Close()
+		}
+	}()
 
 	index, err := bleve.Open(wsr.BleveDir)
 	if err != nil {
 		fail(err)
 		return
 	}
-	defer index.Close()
+	defer func() {
+		if index != nil {
+			index.Close()
+		}
+	}()
+	if err = ensureIngestionDB(archiveDB); err != nil {
+		fail(err)
+		return
+	}
+	files, fingerprints, err := reconcileFiles(ctx, wsr, archiveDB, index, files)
+	if err != nil {
+		fail(err)
+		return
+	}
+	if len(files) == 0 {
+		return
+	}
 
 	// begin processing files
 	emit(sse.Event{
@@ -510,38 +525,162 @@ func ArchiveUpdateEventGenerator(ctx context.Context, wsr *WorkspaceRecord, even
 	})
 	numFiles := len(files)
 
-	// split the files into batches of config.ARCHIVE_BATCH_SIZE
-	batches := make([][]string, 0)
-	for i := 0; i < numFiles; i += config.ARCHIVE_BATCH_SIZE {
-		end := i + config.ARCHIVE_BATCH_SIZE
-		if end > numFiles {
-			end = numFiles
-		}
-		batches = append(batches, files[i:end])
-	}
-
-	// process each batch
+	// Publish one source at a time; slow extraction does not delay other reads.
 	nFilesAcc := 0
 	nDocsAcc := 0
-	for _, batch := range batches {
-		log.Println("Processing batch of", len(batch), "files")
+	for _, file := range files {
+		log.Println("Processing file", file)
 
 		select {
 		case <-ctx.Done():
 			log.Println("Context cancelled, cleaning up")
 			return
-		default: // process a batch
-			// read records from the archive db
-			var existingRecords []FileChunkRecord
-			query, args, err := sqlx.In("SELECT * FROM fileChunks WHERE path IN (?)", batch)
-			if err != nil {
+		default: // process one source
+			// chunk the files
+			newRecords := make([]FileChunkRecord, 0)
+			newDocs := make([]server.Document, 0)
+			var textPath, textHash string
+			var chunks []Chunk
+			prepared := ""
+			nFilesAcc++
+			var owner int
+			if err := archiveDB.Get(&owner, "SELECT job_pid FROM ingestion WHERE path=?", file); err != nil && err != sql.ErrNoRows {
 				fail(err)
 				return
 			}
+			if owner != 0 {
+				continue
+			}
+			if fingerprints[file] == "" {
+				if _, err := archiveDB.Exec("DELETE FROM ingestion WHERE path=?", file); err != nil {
+					fail(err)
+					return
+				}
+				if NeedsExtraction(file) {
+					if err := os.Remove(TextPath(wsr, file)); err != nil && !os.IsNotExist(err) {
+						fail(err)
+						return
+					}
+				}
+			} else {
+				if NeedsExtraction(file) {
+					claimed, claimErr := claimExtraction(archiveDB, wsr, file)
+					if claimErr != nil {
+						fail(claimErr)
+						return
+					}
+					if !claimed {
+						continue
+					}
+					// On any early return, release our claim while still holding the
+					// workspace mutex. Completed jobs already have job_pid=0.
+					defer func(path string) {
+						db, err := sqlx.Connect("sqlite", archiveDBPath)
+						if err != nil {
+							log.Printf("Cannot release extraction job %s: %v", path, err)
+							return
+						}
+						defer db.Close()
+						var owner int
+						if err := db.Get(&owner, "SELECT job_pid FROM ingestion WHERE path=?", path); err != nil || owner != os.Getpid() {
+							return
+						}
+						if err := os.RemoveAll(jobDirectory(wsr, path)); err != nil {
+							log.Printf("Cannot clean extraction job %s: %v", path, err)
+							return
+						}
+						_, err = db.Exec("UPDATE ingestion SET job_pid=0,error='interrupted extraction; retry' WHERE path=? AND job_pid=?", path, os.Getpid())
+						if err != nil {
+							log.Printf("Cannot release extraction job %s: %v", path, err)
+							return
+						}
 
-			query = archiveDB.Rebind(query)
-			err = archiveDB.Select(&existingRecords, query, args...)
-			if err != nil {
+					}(file)
+					// Close Bleve's writer handle too: releasing just the mutex would
+					// still prevent retrieval from opening the index during extraction.
+					if closeErr := index.Close(); closeErr != nil {
+						fail(closeErr)
+						return
+					}
+					index = nil
+					if closeErr := archiveDB.Close(); closeErr != nil {
+						fail(closeErr)
+						return
+					}
+					archiveDB = nil
+					mutex.Unlock()
+					textPath, textHash, err = prepareText(ctx, wsr, file, fingerprints[file])
+					if err == nil {
+						chunks, err = ChunkFile(textPath, config.FILE_CHUNK_LINES)
+					}
+					mutex.Lock()
+					var openErr error
+					archiveDB, openErr = sqlx.Connect("sqlite", archiveDBPath)
+					if openErr != nil {
+						fail(openErr)
+						return
+					}
+					index, openErr = bleve.Open(wsr.BleveDir)
+					if openErr != nil {
+						fail(openErr)
+						return
+					}
+					if err == nil {
+						prepared = textPath
+					}
+				} else {
+					textPath, textHash, err = prepareText(ctx, wsr, file, fingerprints[file])
+					if err == nil {
+						chunks, err = ChunkFile(textPath, config.FILE_CHUNK_LINES)
+					}
+				}
+				if err != nil {
+					log.Printf("Cannot ingest %s: %v", filepath.Join(wsr.WorkTree, file), err)
+					if NeedsExtraction(file) {
+						if cleanupErr := os.RemoveAll(jobDirectory(wsr, file)); cleanupErr != nil {
+							fail(cleanupErr)
+							return
+						}
+					}
+					if _, dbErr := archiveDB.Exec("INSERT INTO ingestion(path, fingerprint, version, chunks, text_hash, error) VALUES (?, ?, ?, 0, '', ?) ON CONFLICT(path) DO UPDATE SET error=excluded.error, job_pid=0", file, fingerprints[file], extractionVersion(file), err.Error()); dbErr != nil {
+						fail(dbErr)
+						return
+					}
+
+					continue
+				}
+
+				// append the new db records and bleve docs
+				for _, chunk := range chunks {
+					nDocsAcc++
+
+					newRecord := FileChunkRecord{
+						Id:        uuid.New(),
+						Path:      file,
+						LineStart: chunk.Lines[0],
+						LineEnd:   chunk.Lines[1],
+					}
+					newRecords = append(newRecords, newRecord)
+
+					newDoc := server.Document{
+						Id:        newRecord.Id,
+						LineEnd:   strconv.Itoa(chunk.Lines[1]),
+						LineStart: strconv.Itoa(chunk.Lines[0]),
+						Path:      file,
+						Text:      chunk.Text,
+					}
+					newDocs = append(newDocs, newDoc)
+				}
+			}
+			if prepared != "" {
+				if err := os.Rename(prepared, TextPath(wsr, file)); err != nil {
+					fail(err)
+					return
+				}
+			}
+			// read records from the archive db
+			var existingRecords []FileChunkRecord
+			if err := archiveDB.Select(&existingRecords, "SELECT * FROM fileChunks WHERE path=?", file); err != nil {
 				fail(err)
 				return
 			}
@@ -559,7 +698,7 @@ func ArchiveUpdateEventGenerator(ctx context.Context, wsr *WorkspaceRecord, even
 					return
 				}
 
-				query, args, err = sqlx.In("DELETE FROM fileChunks WHERE id IN (?)", docIds)
+				query, args, err := sqlx.In("DELETE FROM fileChunks WHERE id IN (?)", docIds)
 				if err != nil {
 					tx.Rollback()
 					fail(err)
@@ -588,51 +727,6 @@ func ArchiveUpdateEventGenerator(ctx context.Context, wsr *WorkspaceRecord, even
 				if err != nil {
 					fail(err)
 					return
-				}
-			}
-
-			// chunk the files
-			newRecords := make([]FileChunkRecord, 0)
-			newDocs := make([]server.Document, 0)
-			for _, file := range batch {
-				nFilesAcc++
-				extension := strings.ToLower(filepath.Ext(file))
-				if extension != ".txt" && extension != ".md" {
-					continue
-				}
-				fullPath := filepath.Join(wsr.WorkTree, file)
-				relPath, err := filepath.Rel(wsr.WorkTree, fullPath)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-
-				chunks, err := ChunkFile(fullPath, config.FILE_CHUNK_LINES)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-
-				// append the new db records and bleve docs
-				for _, chunk := range chunks {
-					nDocsAcc++
-
-					newRecord := FileChunkRecord{
-						Id:        uuid.New(),
-						Path:      relPath,
-						LineStart: chunk.Lines[0],
-						LineEnd:   chunk.Lines[1],
-					}
-					newRecords = append(newRecords, newRecord)
-
-					newDoc := server.Document{
-						Id:        newRecord.Id,
-						LineEnd:   strconv.Itoa(chunk.Lines[1]),
-						LineStart: strconv.Itoa(chunk.Lines[0]),
-						Path:      relPath,
-						Text:      chunk.Text,
-					}
-					newDocs = append(newDocs, newDoc)
 				}
 			}
 
@@ -681,6 +775,19 @@ func ArchiveUpdateEventGenerator(ctx context.Context, wsr *WorkspaceRecord, even
 				log.Println("Indexed new Bleve docs:", len(newDocs))
 			}
 
+			if NeedsExtraction(file) {
+				if err := os.RemoveAll(jobDirectory(wsr, file)); err != nil {
+					fail(err)
+					return
+				}
+			}
+			if fingerprints[file] != "" {
+				if _, err := archiveDB.Exec("INSERT OR REPLACE INTO ingestion(path, fingerprint, version, chunks, text_hash, error) VALUES (?, ?, ?, ?, ?, '')", file, fingerprints[file], extractionVersion(file), len(chunks), textHash); err != nil {
+					fail(err)
+					return
+				}
+			}
+
 			emit(sse.Event{
 				SSEName: "updates.progress",
 				SSEData: fmt.Sprintf("Indexed %d of %d files", nFilesAcc, numFiles),
@@ -688,7 +795,7 @@ func ArchiveUpdateEventGenerator(ctx context.Context, wsr *WorkspaceRecord, even
 		}
 	}
 
-	// done processing batches
+	// done processing sources
 
 	select {
 	case <-ctx.Done():

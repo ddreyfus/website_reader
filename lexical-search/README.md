@@ -135,3 +135,67 @@ Every archive search emits a JSON `archive_search` event to the service log, inc
 `GET /api/v1/documents/:id/articles` streams the source file to list collected article anchors and original-email units in source order, excluding the table of contents and body subheadings. Entries include `kind`, title, anchor, heading level, line range, byte range, document ID, and browser URL. `inventory_mode=article_anchors` identifies our collection format. Other files return ATX Markdown headings with `kind=heading` and `inventory_mode=headings`; these are not verified article boundaries. Fenced-code headings are ignored. Scanning uses bounded line buffers; a heading exceeding 8192 bytes returns an explicit error instead of silently producing an incomplete inventory. Unstructured plain text can have no entries.
 
 Both endpoints accept `offset` (entry count, not bytes) and `limit` (default 30, range 1–100). Follow `next_offset` until null to enumerate all entries; `total` refers to the selected inventory. This limit is independent of `search_limit`. Document lists reflect the current index; article inventories reflect the current source file, whose modification time and size are returned. Restart enumeration if files change between pages. Empty and unindexable files are absent from document lists. Inventories expose captured units, including unavailable article placeholders, not proof that all original publication content was collected. Read content before classifying topics.
+
+## PDF, Word and HTML ingestion
+
+Run `npm run tika:install` once to install the checksum-verified Apache Tika 4.1.0
+application under `.local-mcp/tika/`; Java 17+ must be on the service's PATH.
+The service locates Tika beside its installed binary (`../tika/tika-app-4.1.0.jar`).
+Set `TIKA_APP_JAR` to an absolute launcher path for other layouts. Keep Tika's
+adjacent `lib/` directory with its launcher. Existing Markdown and TXT need no Java.
+
+Supported sources are `.txt`, `.md`, `.pdf`, `.doc`, `.docx`, `.docm`, `.html`, and
+`.htm` (case-insensitive). Originals stay in their source directories. Tika XHTML
+is converted into retained UTF-8 text under
+`<index-directory>/<workspace-id>/extracted/<relative-source-path>.txt`.
+PDF pages receive `## Page N` markers; headings, paragraphs, list items, table
+cells and link destinations are retained. Scripts, styles and surviving navigation
+elements are excluded; other website boilerplate can remain. This is text extraction,
+not layout reconstruction. Tika can invoke an installed Tesseract for OCR; scans
+may contain recognition errors. Word page numbering is not reconstructed.
+
+Search IDs and corpus membership continue to use original source paths.
+`read_document`, chunk navigation, the text viewer and `list_articles` all use the
+same cached text as indexing. Inventory line/byte ranges and version information
+refer to that extracted text. Converted headings are labelled generic headings,
+not verified article boundaries.
+
+Startup, filesystem events and periodic polling compare source fingerprints with
+per-file ingestion records, chunk rows, Bleve passages and extracted-text hashes.
+The ingestion table is added automatically to existing workspace databases.
+Unchanged files previously skipped are backfilled, empty files are recorded, and
+missing records, missing passages, damaged/missing caches or extractor changes
+trigger repair. Deleted sources lose their chunks, ingestion record and cached text.
+Failed extractions record their error in `archive.sqlite` and the service log and
+retry on the next reconciliation; they retain the previous indexed version when one exists.
+Empty sources and failures without a previous indexed version do not appear in
+searchable-document inventories.
+Missing/disconnected source roots retain their existing indexes.
+
+Extraction uses headless Java with a 512 MiB heap per process. PDFs use native
+page text first, falling back to local OCR for pages with insufficient text. Tika
+runs in fork mode with a two-minute progress timeout and a 30-minute total limit;
+a 32-minute process backstop allows cleanup. Deadline failures retain the previous
+successful index instead of publishing partial text. The service records its owning PID before extraction, then
+closes the SQLite and Bleve handles and releases the workspace mutex while Tika
+builds text in a separate `.txt.job/` directory. Existing indexed text remains
+readable. The service reacquires the mutex only to publish and index one source
+at a time. Concurrent scanners skip active jobs. A later scanner removes an
+incomplete job and its temporary files only when the owning process has exited;
+a different live PID is not treated as a failed job. Interrupted attempts in the
+current process release their claims on return. Initial backfill can take time.
+Changing Tika's launcher path, size or modification time, or the
+text-conversion version, invalidates previously extracted text.
+
+Run `npm run test:mcp` and `GOFLAGS="-ldflags=-linkmode=external" npm run test:bleve`.
+For an actual parser integration test, put representative files in a test directory
+and run from `lexical-search/`:
+
+```sh
+TIKA_TEST_JAR=/absolute/path/to/tika-app-4.1.0.jar \
+TIKA_TEST_SOURCES=/absolute/path/to/samples \
+go test -ldflags=-linkmode=external ./routes -run TestTikaSampleRetrieval -v
+```
+
+The integration test copies sources and creates an isolated archive; it does not
+write to the original files or the live index.

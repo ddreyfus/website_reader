@@ -269,3 +269,12 @@ sources; reads reject traversal, unindexed files, and symlinks escaping a source
 Regression coverage: `npm run test:mcp`, the extension settings test, and Go
 retrieval/race tests cover discovery, hierarchy, scope boundaries, counts,
 ranking, long-line passage location, pagination, and viewer escaping.
+
+### Binary and HTML document ingestion
+
+Install the text extractor with `npm run tika:install` and make Java 17+ available
+on the Bleve service's PATH. Rebuild and restart Bleve to enable PDF, Word and
+HTML ingestion in the configured indexing directories. No new MCP tools are
+needed: existing search, read and inventory tools use the retained extracted text.
+Existing unchanged documents are discovered by reconciliation. See
+`lexical-search/README.md` for cache locations, OCR behavior and failure diagnostics.

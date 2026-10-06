@@ -343,6 +343,14 @@ func readDocument(c *gin.Context) {
 		ErrorHandler(c, fmt.Errorf("document is not a regular file"), 403)
 		return
 	}
+	if archive.NeedsExtraction(path) {
+		resolved = archive.TextPath(&workspace, path)
+		info, err = os.Stat(resolved)
+		if err != nil {
+			ErrorHandler(c, fmt.Errorf("extracted text unavailable; wait for reconciliation"), 409)
+			return
+		}
+	}
 	limit := 32768
 	offset := int64(0)
 	line := 0

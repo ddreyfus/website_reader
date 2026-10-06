@@ -10,6 +10,7 @@
     "mcp:stop": "node scripts/mcp-runtime.mjs stop",
     "mcp:status": "node scripts/mcp-runtime.mjs status",
     "test:mcp": "node --test tests/mcp.test.mjs",
+    "tika:install": "node scripts/install-tika.mjs",
     "bleve:build": "mkdir -p .local-mcp/bin && cd lexical-search && go build -o ../.local-mcp/bin/lexical-search .",
     "bleve:start": ".local-mcp/bin/lexical-search",
     "test:bleve": "cd lexical-search && go test ./..."

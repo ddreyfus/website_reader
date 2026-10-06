@@ -296,8 +296,7 @@ func stageTextFiles(ctx context.Context, gitDir, workTree string) error {
 	seen := map[string]bool{}
 	// Remove legacy non-text entries and Git links before adding their text children.
 	for path := range tracked {
-		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".md" && ext != ".txt" {
+		if !SupportedFile(path) {
 			if err := exec.CommandContext(ctx, "git", "--git-dir="+gitDir, "update-index", "--force-remove", "--", path).Run(); err != nil {
 				return fmt.Errorf("remove legacy entry %s: %w", path, err)
 			}
@@ -317,8 +316,7 @@ func stageTextFiles(ctx context.Context, gitDir, workTree string) error {
 			}
 			return nil
 		}
-		ext := strings.ToLower(filepath.Ext(path))
-		if (ext != ".md" && ext != ".txt") || entry.Type()&os.ModeSymlink != 0 {
+		if !SupportedFile(path) || entry.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
 		info, err := entry.Info()
