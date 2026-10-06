@@ -293,7 +293,7 @@ test("Website Reader extension", async (t) => {
           const count = mode === "text-only" ? 0 : 3;
           await popup.getByText(`Downloaded email and ${count} articles`, { exact: false }).waitFor({ timeout: 30000 });
           const state = await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState);
-          assert.deepEqual(await popup.evaluate(() => globalThis.requestedOrigins || []), count ? ["https://medium.com/*", "https://newsletter.test/*"] : []);
+          assert.deepEqual(await popup.evaluate(() => globalThis.requestedOrigins || []), count ? ["https://*.medium.com/*", "https://newsletter.test/*"] : []);
           assert.equal(state.status, "completed");
           assert.equal(state.emailId, "chosen");
           assert.equal(state.filename, "newsletter-newsletter.test-chosen.md");

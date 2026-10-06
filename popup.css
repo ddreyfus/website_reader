@@ -132,3 +132,6 @@ pre {
 #archive-settings fieldset { margin: 16px 0 0; min-width: 0; border: 1px solid #cbd0c9; }
 #archive-settings p { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 #archive-settings input:focus-visible, #archive-settings textarea:focus-visible { outline: 3px solid #efb954; outline-offset: 2px; }
+
+#attachment-file { max-width: 100%; }
+#attachment-status { margin: 0; font-size: 13px; overflow-wrap: anywhere; }

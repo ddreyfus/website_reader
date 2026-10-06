@@ -2,6 +2,11 @@ const collectButton = document.querySelector("#collect");
 const continueButton = document.querySelector("#continue");
 const skipButton = document.querySelector("#skip");
 const handoffButton = document.querySelector("#handoff");
+const attachmentFile = document.querySelector("#attachment-file");
+const attachmentStatus = document.querySelector("#attachment-status");
+const useBatchButton = document.querySelector("#use-batch");
+let handoffRunning = false;
+let economistLanding = false;
 const copyButton = document.querySelector("#copy");
 const downloadLogButton = document.querySelector("#download-log");
 const status = document.querySelector("#status");
@@ -95,10 +100,10 @@ document.querySelector("#close").addEventListener("click", async () => {
   } catch (error) { setStatus(`Could not close Website Reader: ${error.message || String(error)}`); }
 });
 
-async function readingBatchTab(resume = true) {
+async function readingBatchTab(resume = false) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const { collectionState: state } = await chrome.storage.local.get("collectionState");
-  if (resume && ["running", "paused"].includes(state?.status)) {
+  if ((resume || (Number.isInteger(state?.articleTabId) && tab?.id === state.articleTabId)) && ["running", "paused"].includes(state?.status) && Number.isInteger(state.tabId)) {
     const source = await chrome.tabs.get(state.tabId);
     if (source.windowId === tab?.windowId) return source;
   }
@@ -245,22 +250,32 @@ function setStatus(message, linkUrl = "") {
   status.append(document.createElement("br"), link);
 }
 
-function renderState(state) {
-  handoffButton.disabled = state?.status !== "completed" || !Number.isInteger(state.downloadId);
+function renderState(state, showStatus = true) {
+  const file = attachmentFile.files[0];
+  attachmentFile.disabled = handoffRunning;
+  useBatchButton.disabled = handoffRunning;
+  handoffButton.disabled = handoffRunning || (!file && state?.status !== "completed");
+  attachmentStatus.textContent = file ? `ChatGPT attachment: ${file.name}`
+    : state?.status === "completed" ? `ChatGPT attachment: ${state.filename}` : "No completed collection or file selected.";
+  useBatchButton.hidden = !file;
   const sameEdition = state?.editionUrl === activeEditionUrl;
   const active = ["running", "paused"].includes(state?.status);
-  const resumable = sameEdition && state.status === "paused";
+  const resumable = state?.status === "paused";
   skipButton.hidden = !(resumable && Number.isInteger(state.articleTabId));
   skipButton.disabled = skipButton.hidden;
-  collectButton.disabled = !activeEditionUrl || (active && (!sameEdition || state.status === "running"));
+  collectButton.disabled = (!activeEditionUrl && !economistLanding) || state?.status === "running";
+  collectButton.textContent = economistLanding ? "Open Economist weekly edition"
+    : resumable ? "Replace paused batch with current page"
+    : emails.length ? "Collect email and articles" : `Collect ${publicationName(activeEditionUrl)} issue`;
   continueButton.disabled = !resumable;
   continueButton.hidden = !resumable;
   if (state?.log?.length) {
     logOutput.textContent = state.log.join("\n");
     downloadLogButton.disabled = false;
   }
+  if (!showStatus) return;
   if (sameEdition && state.statusMessage) setStatus(state.statusMessage, state.challengeUrl);
-  else if (active) setStatus(`A collection is ${state.status} for ${state.editionUrl}. Open that reading batch before starting another one.`);
+  else if (active) setStatus(`A collection is ${state.status} for ${state.editionUrl}. ${resumable ? "Continue it or replace it with the current page." : "Wait for it to finish before starting another."}`, state.challengeUrl);
 }
 
 async function download(content, filename, mimeType) {
@@ -533,8 +548,18 @@ async function runCollection(resume, permissionRequest = null) {
     let email = null;
     if (isGmailUrl(tab.url)) {
       const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: captureEmails });
-      email = result?.find((message) => message.id === emailSelect.value);
+      const { collectionState: saved } = await chrome.storage.local.get("collectionState");
+      email = result?.find((message) => message.id === (resume ? saved?.emailId : emailSelect.value));
       if (!email) throw new Error("Select one expanded email. Reopen Website Reader if the message has changed.");
+    }
+    if (!resume && economistLanding) {
+      const [{ result: issueUrl }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => {
+        return [...document.querySelectorAll('a[href]')].map(a => a.href)
+          .filter(url => /^https:\/\/www\.economist\.com\/weeklyedition\/\d{4}-\d{2}-\d{2}\/?$/.test(url)).sort().at(-1)
+          || "https://www.economist.com/weeklyedition";
+      } });
+      await chrome.tabs.update(tab.id, { url: issueUrl });
+      return;
     }
     const currentEdition = email?.editionUrl || (isIssueUrl(tab.url) ? editionUrl(tab.url) : "");
     if (!currentEdition) throw new Error("Open a supported publication issue page first.");
@@ -552,7 +577,7 @@ async function runCollection(resume, permissionRequest = null) {
         await chrome.storage.local.set({ collectionState });
       }
     }
-    if (!resume && ["running", "paused"].includes(collectionState?.status) && collectionState.editionUrl !== currentEdition) {
+    if (!resume && collectionState?.status === "running") {
       throw new Error(`A collection is ${collectionState.status} for ${collectionState.editionUrl}. Open that reading batch before starting another one.`);
     }
     if (!resume && Number.isInteger(collectionState?.articleTabId)) {
@@ -570,9 +595,9 @@ async function runCollection(resume, permissionRequest = null) {
 
 async function collectFromClick(resume) {
   try {
-    const email = emails.find((message) => message.id === emailSelect.value);
+    const email = resume ? null : emails.find((message) => message.id === emailSelect.value);
     const articleUrl = resume ? status.querySelector("a")?.href : "";
-    const links = email ? [...email.articles.map(({ url }) => url), ...(articleUrl ? [articleUrl] : [])] : [];
+    const links = [...(email?.articles.map(({ url }) => url) || []), ...(articleUrl ? [articleUrl] : [])];
     const origins = [...new Set(links.map(url => {
       const { protocol, hostname } = new URL(url);
       return protocol === "https:" && (hostname === "medium.com" || hostname.endsWith(".medium.com"))
@@ -589,7 +614,7 @@ skipButton.addEventListener("click", async () => {
   skipButton.disabled = true;
   try {
     const { collectionState: state } = await chrome.storage.local.get("collectionState");
-    if (state?.status !== "paused" || state.editionUrl !== activeEditionUrl || !Number.isInteger(state.articleTabId)) throw new Error("Return to the saved Gmail message before skipping an article.");
+    if (state?.status !== "paused" || !Number.isInteger(state.articleTabId)) throw new Error("Return to the saved Gmail message before skipping an article.");
     const article = state.articles[state.currentIndex];
     article.unsupported = true;
     article.markdown = `## ${article.title}\n\n[Email link](<${article.url}>)\n\n> **Unavailable:** Skipped by the user after: ${state.statusMessage}. See the original email for any excerpt.`;
@@ -636,18 +661,25 @@ copyButton.addEventListener("click", async () => {
 });
 
 handoffButton.addEventListener("click", async () => {
+  handoffRunning = true;
   handoffButton.disabled = true;
+  attachmentFile.disabled = true;
+  useBatchButton.disabled = true;
   try {
     const permissionRequest = chrome.permissions.request({ origins: ["https://chatgpt.com/*"] });
     await permissionRequest;
     const { collectionState } = await chrome.storage.local.get("collectionState");
-    if (collectionState?.status !== "completed") throw new Error("Complete a collection first.");
-    await navigator.clipboard.writeText(await digestPrompt(collectionState.sourceUrl));
-    setStatus("Opening ChatGPT with the collected file. The matching digest prompt is copied.");
-    const result = await chrome.runtime.sendMessage({ type: "handoff" });
+    const file = attachmentFile.files[0];
+    if (!file && collectionState?.status !== "completed") throw new Error("Complete a collection or choose a file first.");
+    if (file && !/\.(?:md|markdown|txt)$/i.test(file.name)) throw new Error("Choose a Markdown or text file.");
+    const content = file ? await file.text() : undefined;
+    if (file && !content.trim()) throw new Error("The selected file is empty.");
+    if (!file) await navigator.clipboard.writeText(await digestPrompt(collectionState.sourceUrl));
+    setStatus(file ? `Opening ChatGPT with ${file.name}.` : "Opening ChatGPT with the collected file. The matching digest prompt is copied.");
+    const result = await chrome.runtime.sendMessage({ type: "handoff", ...(file ? { content, filename: file.name } : {}) });
     if (!result?.ok) throw new Error(result?.error || "The ChatGPT handoff failed.");
   } catch (error) { setStatus(error.message || "The ChatGPT handoff failed."); }
-  finally { const { collectionState } = await chrome.storage.local.get("collectionState"); handoffButton.disabled = collectionState?.status !== "completed" || !Number.isInteger(collectionState.downloadId); }
+  finally { handoffRunning = false; const { collectionState } = await chrome.storage.local.get("collectionState"); renderState(collectionState, false); }
 });
 
 downloadLogButton.addEventListener("click", async () => {
@@ -661,10 +693,21 @@ downloadLogButton.addEventListener("click", async () => {
   }
 });
 
+attachmentFile.addEventListener("change", async () => {
+  const { collectionState } = await chrome.storage.local.get("collectionState");
+  renderState(collectionState);
+});
+useBatchButton.addEventListener("click", async () => {
+  attachmentFile.value = "";
+  const { collectionState } = await chrome.storage.local.get("collectionState");
+  renderState(collectionState);
+});
+
 async function loadState() {
   try {
     const { collectionState, latestLog = "" } = await chrome.storage.local.get(["collectionState", "latestLog"]);
     const tab = await readingBatchTab();
+    economistLanding = /^https:\/\/www\.economist\.com(?:\/|$)/.test(tab?.url || "") && !isIssueUrl(tab?.url);
     activeEditionUrl = isIssueUrl(tab?.url) ? editionUrl(tab.url) : "";
     const publication = isGmailUrl(tab?.url) ? "email" : publicationName(tab?.url || "");
     const gmail = isGmailUrl(tab?.url);
@@ -700,5 +743,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 chrome.tabs.onActivated.addListener(async () => await loadState());
+chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
+  if (tab.active && change.status === "complete") await loadState();
+});
 
 loadState();

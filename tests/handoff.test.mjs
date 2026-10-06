@@ -86,6 +86,47 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
       });
     }
 
+    await t.test("Economist homepage opens its latest linked issue while retaining the saved batch", async () => {
+      const before = await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState);
+      const issueUrl = "https://www.economist.com/weeklyedition/2026-10-03";
+      await context.route("https://www.economist.com/**", route => route.fulfill({ status: 200, contentType: "text/html", body: `<main><a href="/weeklyedition/2026-09-26">Previous issue</a><a href="${issueUrl}">Latest issue</a></main>` }));
+      const source = await context.newPage();
+      await source.goto("https://www.economist.com/");
+      const popup = await context.newPage();
+      await source.bringToFront();
+      await popup.goto(`chrome-extension://${extensionId}/popup.html`);
+      await popup.getByRole("button", { name: "Open Economist weekly edition" }).click();
+      await source.waitForURL(issueUrl);
+      await popup.getByRole("button", { name: "Collect The Economist issue", exact: true }).waitFor();
+      assert.equal(await popup.locator("#collect").isEnabled(), true);
+      assert.deepEqual(await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState), before);
+      await popup.close();
+      await source.close();
+    });
+
+    await t.test("chosen file attaches exact text without replacing the saved batch", async () => {
+      startupDelay = 0;
+      const before = await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState);
+      const popup = await context.newPage();
+      await popup.goto(`chrome-extension://${extensionId}/popup.html`);
+      await popup.evaluate(() => { chrome.permissions.request = async () => true; });
+      const content = "# Chosen issue\n\nExact file text — café.\n";
+      await popup.locator("#attachment-file").setInputFiles({ name: "chosen.md", mimeType: "text/markdown", buffer: Buffer.from(content) });
+      assert.match(await popup.locator("#attachment-status").textContent(), /chosen.md/);
+      const chat = await context.newPage();
+      await chat.goto("https://chatgpt.com/");
+      await popup.bringToFront();
+      await popup.getByRole("button", { name: "Open in ChatGPT" }).click();
+      await chat.getByRole("status").waitFor();
+      assert.equal(await chat.locator("[data-composer-attachments]").getAttribute("data-content"), content);
+      assert.equal(await chat.locator('[aria-label="Attach files"]').evaluate(input => input.files[0].name), "chosen.md");
+      assert.deepEqual(await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState), before);
+      await popup.getByRole("button", { name: "Use saved collection instead" }).click();
+      assert.match(await popup.locator("#attachment-status").textContent(), /reading-batch.md/);
+      await chat.close();
+      await popup.close();
+    });
+
     await t.test("shows a manual-attachment fallback when ChatGPT requires login", async () => {
       signedIn = false;
       const popup = await context.newPage();

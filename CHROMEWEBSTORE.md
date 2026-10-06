@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — Website Reader
 
-Last updated: 2026-10-05. Local development draft; no submission requested.
+Last updated: 2026-10-06. Local development draft; no submission requested.
 
 Free Press digests collect only Free Press articles. External email links and externally redirected sources are excluded from article extraction.
 
@@ -14,7 +14,7 @@ Name: Website Reader
 
 Short description: Collect publication issues or a Gmail newsletter and its linked articles into Markdown.
 
-Detailed description: Save a publication issue or an expanded Gmail newsletter with its linked articles as one reading document. Preserve email commentary, article links, and source information, with newsletter filenames based on the sending domain. Copy a digest prompt or attach a completed batch to a new ChatGPT draft. Missing articles are logged so collection can finish. Article access depends on your existing subscriptions and the site's availability.
+Detailed description: Save a publication issue or an expanded Gmail newsletter with its linked articles as one reading document. Preserve email commentary, article links, and source information, with newsletter filenames based on the sending domain. Copy a digest prompt or attach a completed batch or chosen Markdown/text file to a new ChatGPT draft. Missing articles are logged so collection can finish. Article access depends on your existing subscriptions and the site's availability.
 
 Category: Productivity. Primary language: English.
 
@@ -43,7 +43,7 @@ Store icon and screenshots are not prepared. Before publishing, capture the Gmai
 
 The extension handles selected website content and personal communications, including sender addresses and any personal information present in the chosen email. The latest batch, source URLs, progress, and logs stay in local extension storage until replaced or removed. Downloaded files remain until the user deletes them.
 
-Article requests use the browser session; destination sites receive normal requests, and tracking links may register clicks. Email text is not sent to linked sites. Open in ChatGPT sends the completed document to ChatGPT; submission of the chat remains under user control. There is no developer telemetry or developer-operated collection server.
+Article requests use the browser session; destination sites receive normal requests, and tracking links may register clicks. Email text is not sent to linked sites. Chosen files are read only when Open in ChatGPT is selected and are not saved in extension storage. Open in ChatGPT sends the selected file or completed document to ChatGPT; submission of the chat remains under user control. There is no developer telemetry or developer-operated collection server.
 
 Data is not sold, used for unrelated purposes, or used for lending decisions. Users can remove optional site access in Chrome and remove extension data by uninstalling the extension. ChatGPT uploads are governed by that service's data controls.
 
@@ -59,6 +59,8 @@ Local unpacked installation only. Publisher, public contact, support URL, distri
 
 | Version | Date | Changes | Status |
 |---|---|---|---|
+| 0.1.0 | 2026-10-06 | Digest archive comparisons use a bounded NEW/ADDS/REPEAT familiarity test. | Local draft |
+| 0.1.0 | 2026-10-06 | Existing Markdown/text attachment selection, explicit paused-batch replacement, and Economist weekly-edition navigation. Refresh control screenshots. | Local draft |
 | 0.1.0 | 2026-10-05 | Recognize the current ChatGPT composer without relying on its former element ID. | Local draft |
 | 0.1.0 | 2026-10-04 | ChatGPT handoff waits for the composer to become ready and distinguishes sign-in, upload, and attachment-confirmation failures. | Local draft |
 | 0.1.0 | 2026-09-30 | Gmail newsletter collection, provenance-aware digest prompt, and optional ChatGPT handoff. Readable articles no longer pause merely because a background security script is present. | Local draft |

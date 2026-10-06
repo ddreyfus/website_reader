@@ -7,13 +7,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       if (sender.url !== chrome.runtime.getURL("popup.html")) throw new Error("Use Website Reader's ChatGPT button.");
       const { collectionState: state } = await chrome.storage.local.get("collectionState");
-      if (state?.status !== "completed" || !Number.isInteger(state.downloadId)) throw new Error("Complete a collection first.");
-      const content = collectionMarkdown(state);
+      const selectedFile = typeof message.content === "string" && typeof message.filename === "string";
+      if (!selectedFile && state?.status !== "completed") throw new Error("Complete a collection or choose a file first.");
+      const content = selectedFile ? message.content : collectionMarkdown(state);
+      const filename = selectedFile ? message.filename : state.filename;
+      if (!content.trim()) throw new Error("The attachment is empty.");
       const granted = await chrome.permissions.contains({ origins: ["https://chatgpt.com/*"] });
       // Finish in the worker so opening a tab may close the popup safely.
       const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: true });
       if (!granted) {
-        sendResponse({ ok: false, error: "ChatGPT opened and the prompt is copied. Attach the downloaded Markdown manually; site access was declined." });
+        sendResponse({ ok: false, error: `ChatGPT opened. Attach ${filename} manually; site access was declined.` });
         return;
       }
       await new Promise((resolve, reject) => {
@@ -38,7 +41,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         checkLoaded();
       });
-      const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: attachBatch, args: [content, state.filename] });
+      const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: attachBatch, args: [content, filename] });
       if (!result?.ok) await appendLog(`ChatGPT handoff failed: ${result?.error || "No attachment result returned."}`);
       sendResponse(result || { ok: false, error: "ChatGPT returned no attachment result. Attach the Markdown manually; the prompt is copied." });
     })().catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
@@ -256,7 +259,7 @@ async function attachBatch(content, filename) {
     }, () => needsLogin() ? "ChatGPT is showing a sign-in control. Sign in, then retry Open in ChatGPT."
       : "ChatGPT's composer or attachment control did not become ready within 30 seconds. Retry Open in ChatGPT or attach the Markdown manually.");
     const files = new DataTransfer();
-    files.items.add(new File([content], filename, { type: "text/markdown" }));
+    files.items.add(new File([content], filename, { type: /\.txt$/i.test(filename) ? "text/plain" : "text/markdown" }));
     input.files = files.files;
     input.dispatchEvent(new Event("change", { bubbles: true }));
     await waitFor(() => {

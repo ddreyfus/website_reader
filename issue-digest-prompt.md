@@ -28,17 +28,27 @@ Read the Markdown directly where possible. Use Python only when necessary to acc
 
 ## Comparison with the reading archive
 
-Assume that material in my local reading archive has been read. After assessing each article on its own evidence, use **Website Reader Local** to compare its main ideas with archived content. This comparison is explicitly permitted; archived material must not fill gaps in the article's evidence or change what you attribute to its author.
+Assume that material in my local reading archive has been read. Use **Website Reader Local** to determine what, if anything, each current item adds to that prior reading.
 
-Use `list_corpora` to discover relevant sources. Before searching, generate a small set of distinct queries covering the main claims, synonyms, expanded acronyms, related concepts, named entities, and likely terminology in older articles. For example, AI coverage may require queries about artificial intelligence, language models, data centres, chips, automation, agents, productivity, and OpenAI; select terms relevant to the actual question. A standalone two-character query such as “AI” produces no trigrams, so expand it.
+For each substantive item, **first assess the item entirely from its own evidence**. Only then compare its **substantive contribution** with the archive. Archived material must not fill gaps in the item's evidence or change what you attribute to its author.
 
-Run these focused queries separately through `search_archive` within the relevant scope, rather than relying on one broad query or one top-30 list. Combine the hits, deduplicate by chunk ID, group by document, and use `read_document` to inspect promising matches in context. Scores from different queries are not directly comparable; use repeated retrieval and substantive relevance to choose what to read. Refine queries using terminology found in the matches, and search across the archive when source-specific searches are insufficient. Search scores measure lexical overlap, not whether two passages express the same idea. Confirm substantive overlap before calling an idea familiar. Keep query planning and merging out of the digest unless requested.
+Use the item's main claim or your concise summary of it to construct one or more focused archive searches. Search for prior material addressing substantially the same idea, evidence, event, or argument. **Exclude the current item and copies of it from the comparison.**
 
-For requests for all articles on a topic, use `list_documents` (corpus scope or `path_contains` where appropriate) and `list_articles` for each relevant document, following `next_offset` until null. Inspect article content with `read_document` before classifying topics; titles alone may miss relevant coverage. Distinguish a search-based selection from a complete inventory. Generic heading inventories are not verified article boundaries, and unavailable content remains unclassified.
+Inspect sufficiently promising retrieved material to determine whether the current item materially adds anything. Do not attempt to prove exhaustively that an idea is absent from the archive.
 
-The uploaded issue may already be indexed. Exclude the article being assessed and identical copies of that article from its comparison evidence; a self-match does not establish overlap with other reading. Compare ideas rather than shared boilerplate or source names.
+Classify the result as:
 
-Keep the comparison concise: **Already in the archive:** identify overlapping ideas with links to supporting archived documents. **Ideas not found in the archive:** identify the remaining ideas, new evidence, or changed conclusions. If appropriate, say “This document contains content that's in the archive; the ideas not found there are …”. If nothing additional is found, say so. “Not found” describes the searches performed, not proof of originality. If the archive tools are unavailable, say the comparison could not be completed rather than claiming novelty.
+- **NEW** — No substantively relevant prior material was retrieved. Treat the item as new to the archive for purposes of this digest.
+- **ADDS:** *what is new* — Prior material covers part of the subject, but the current item adds a materially new claim, argument, development, evidence, mechanism, implication, or conclusion. State the increment precisely.
+- **REPEAT** — Retrieved prior material already contains the substantive contribution of the current item. State briefly what prior material covers it; do not repeat the full summary.
+
+A shared topic is not enough to call something a repeat. Compare the **substantive contribution**. For example, if the archive already establishes that AI may reduce labour demand, an article arguing that this will erode payroll- and income-tax revenues adds a distinct fiscal implication.
+
+When useful, link to the archived material supporting an **ADDS** or **REPEAT** judgment.
+
+Archive retrieval is a practical familiarity test, not evidence about originality in the world. Therefore **NEW means only that no relevant archive match was retrieved**.
+
+If the archive tools are unavailable, say the comparison could not be completed rather than classifying the item as NEW.
 
 ## Summaries
 

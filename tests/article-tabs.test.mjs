@@ -44,12 +44,14 @@ test("Medium permission requests include author subdomains without granting look
     emailSelect: { value: "selected" },
     status: { querySelector: () => ({ href: "https://pub.towardsai.net/story" }) },
     chrome: { permissions: { request(options) { requested = options.origins; return Promise.resolve(true); } } },
-    async runCollection(resume, permissionRequest) { assert.equal(resume, true); await permissionRequest; },
+    async runCollection(resume, permissionRequest) { await permissionRequest; },
     setStatus(message) { assert.fail(message); }
   });
   vm.runInContext(code.slice(code.indexOf("async function collectFromClick("), code.indexOf("collectButton.addEventListener(\"click\"")), context);
+  await context.collectFromClick(false);
+  assert.deepEqual([...requested], ["https://*.medium.com/*", "https://fake-medium.com/*"]);
   await context.collectFromClick(true);
-  assert.deepEqual([...requested], ["https://*.medium.com/*", "https://fake-medium.com/*", "https://pub.towardsai.net/*"]);
+  assert.deepEqual([...requested], ["https://pub.towardsai.net/*"]);
 });
 
 test("persistent controls target the saved source while its article is active", async () => {
@@ -62,12 +64,16 @@ test("persistent controls target the saved source while its article is active", 
     storage: { local: { async get() { return { collectionState: state }; } } }
   } });
   vm.runInContext(code.slice(code.indexOf("async function readingBatchTab("), code.indexOf("function isGmailUrl(")), context);
-  assert.equal(await context.readingBatchTab(), source);
+  assert.equal(await context.readingBatchTab(true), source);
+  assert.equal(await context.readingBatchTab(), active);
   assert.equal(await context.readingBatchTab(false), active);
+  state.articleTabId = active.id;
+  assert.equal(await context.readingBatchTab(), source);
+  delete state.articleTabId;
   source.windowId = 8;
-  assert.equal(await context.readingBatchTab(), active);
+  assert.equal(await context.readingBatchTab(true), active);
   state = { status: "completed", tabId: 1 };
-  assert.equal(await context.readingBatchTab(), active);
+  assert.equal(await context.readingBatchTab(true), active);
 });
 
 test("newsletter articles use rendered tabs and pause for user access", async (t) => {
@@ -122,7 +128,7 @@ test("newsletter articles use rendered tabs and pause for user access", async (t
       const popup = await context.newPage();
       await gmail.bringToFront();
       await popup.goto(`chrome-extension://${id}/popup.html`);
-      await popup.getByRole("button", { name: "Collect email and articles" }).waitFor();
+      await popup.locator("#collect").waitFor();
       await popup.evaluate(() => { chrome.permissions.request = async ({ origins }) => { globalThis.requestedOrigins = origins; return true; }; });
       return popup;
     }

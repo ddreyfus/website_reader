@@ -26,6 +26,10 @@
         <button id="collect" class="primary" type="button">Collect issue</button>
         <button id="continue" type="button" hidden disabled>Continue collection</button>
         <button id="skip" type="button" hidden disabled>Skip article</button>
+        <label for="attachment-file">Choose an existing Markdown or text file</label>
+        <input id="attachment-file" type="file" accept=".md,.markdown,.txt,text/markdown,text/plain">
+        <button id="use-batch" type="button" hidden>Use saved collection instead</button>
+        <p id="attachment-status" aria-live="polite">No completed collection or file selected.</p>
         <button id="handoff" type="button" disabled>Open in ChatGPT</button>
         <button id="copy" type="button">Copy digest prompt</button>
         <button id="download-log" type="button" disabled>Download latest log</button>

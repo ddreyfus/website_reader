@@ -117,11 +117,24 @@ The Copy button places only the instructions from [`issue-digest-prompt.md`](iss
 
 The log records cataloging, request timing, response status, extraction results, retries, skipped articles, pauses, downloads, and cleanup errors. Only the latest collection log is retained.
 
+The panel follows the active page, except article tabs opened for a saved collection. **Continue collection** resumes the saved paused batch. **Replace paused batch with current page** starts over using the current page. A running batch must finish or pause before another starts. On Economist pages outside a dated weekly edition, **Open Economist weekly edition** opens the newest dated issue linked on the page, or the weekly edition index; then select a dated issue and collect it.
+
+Collection transitions use the existing saved state:
+
+| Saved state | Available actions | Next state |
+|---|---|---|
+| None or completed | Collect current issue/email | Running |
+| Running | Wait; another collection is blocked | Paused on interruption, completed on success |
+| Paused | Continue or skip the blocked article | Running |
+| Paused | Replace with current issue/email | Running with a new batch |
+
+Choosing a file changes only the ChatGPT attachment. Opening ChatGPT leaves collection progress unchanged. During handoff, attachment selection is disabled until the operation finishes. Selected files remain available while the panel stays open.
+
 ## Open a collected batch in ChatGPT
 
-After a collection finishes, select **Open in ChatGPT**. This works from any active tab and uses the most recently completed batch, whether it came from Gmail or a supported publication. Chrome asks for optional access to `chatgpt.com` so Website Reader can attach the file.
+After a collection finishes, select **Open in ChatGPT**. The attachment label shows the saved completed batch. You can instead choose an existing Markdown or text file; selecting a file does not change the saved collection. Use **Use saved collection instead** to switch back. A chosen file does not automatically copy a publication-specific prompt. Chrome asks for optional access to `chatgpt.com` so Website Reader can attach the file.
 
-The action copies the prompt for the saved batch's source, opens a new ChatGPT web chat, and attaches the exact generated Markdown. It waits up to 30 seconds for an editable composer and enabled attachment control. Startup, sign-in, upload, and unconfirmed-attachment failures are reported in the panel; attachment failures are also saved in the log. If confirmation times out, check the draft before retrying to avoid duplicate attachments. Paste the prompt and submit when ready. It does not submit a message automatically. The original download remains available.
+When using the saved collection, the action copies the prompt for that batch's source, opens a new ChatGPT web chat, and attaches the exact generated Markdown. It waits up to 30 seconds for an editable composer and enabled attachment control. Startup, sign-in, upload, and unconfirmed-attachment failures are reported in the panel; attachment failures are also saved in the log. If confirmation times out, check the draft before retrying to avoid duplicate attachments. Paste the prompt and submit when ready. It does not submit a message automatically. The original download remains available.
 
 This targets the ChatGPT website. The official ChatGPT browser extension's side chat has no cross-extension upload listener in the inspected version (1.26.901.11451), so Website Reader cannot directly attach a file inside that separate panel. If ChatGPT requires sign-in, its attachment UI changes, or access is declined, attach the downloaded file manually; the prompt is still copied. The automatic attachment rebuilds the document from the saved collection, so clearing download history does not prevent handoff.
 
