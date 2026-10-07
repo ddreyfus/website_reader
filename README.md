@@ -88,14 +88,14 @@ Gmail filenames use `newsletter-<sending-domain>-<message-id>.md`. The file pres
 
 The email prompt uses question → claim → evidence → open questions → why this might be interesting, with a position-and-reasoning summary for opinion. It distinguishes the newsletter's claims from the linked article's evidence and permits an empty reading shortlist.
 
-Only visible, expanded message bodies are captured, not the inbox or collapsed messages. Gmail's DOM can change. Clipped emails are labeled partial; hidden content is not captured. Articles use normal browser navigation with your signed-in session and are read from the rendered page. Redirect destinations require extension access before their text can be read. Login and challenge detection is heuristic; some paywalls may expose only a preview, which is labeled when the extracted text is too short. Collection does not bypass access restrictions. Return to the original Gmail conversation and select the same message to resume an interrupted batch.
+Only visible, expanded message bodies are captured, not the inbox or collapsed messages. Gmail's DOM can change. Clipped emails are labeled partial; hidden content is not captured. Articles use normal browser navigation with your signed-in session and are read from the rendered page. Redirect destinations require extension access before their text can be read. Login and challenge detection is heuristic; some paywalls may expose only a preview, which is labeled when the extracted text is too short. Collection does not bypass access restrictions. After collection starts, the email text and article queue are saved. You can close, reload, or navigate away from Gmail and close Website Reader while collection continues in the background. Reopen Website Reader on any tab to continue or skip a paused article. A background alarm resumes saved progress if Chrome suspends the extension worker; restarting Chrome pauses collection until you continue it.
 
 ## Resume an interrupted collection
 
-Collection pauses if the collection tab is closed or navigated away, or the collection itself is interrupted. Individual article failures are logged and skipped.
+Publication issue collection pauses if its source tab is closed or navigated away. Email collection continues from its saved snapshot; login, site-access prompts, or browser restart can pause it. Individual unreadable articles are logged and skipped.
 
 1. Read the status message in the popup.
-2. Return to the same issue page used to start the collection.
+2. For a publication issue, return to the same issue page. For an email batch, any tab works.
 3. Open Website Reader and select **Continue collection**.
 
 A saved collection is tied to its original issue URL and cannot be resumed from a different issue. If the completed issue's download fails, **Continue collection** retries the download without recollecting successful articles.
@@ -145,6 +145,10 @@ This targets the ChatGPT website. The official ChatGPT browser extension's side 
 - Interactive pages are not reconstructed. They are represented by an unsupported notice and a link to the original article.
 - Very short extractions are treated as unsupported because they are unlikely to contain a reliable full article.
 - The extension does not bypass CAPTCHAs, browser challenges, subscriptions, or paywalls.
+
+## Future improvements
+
+- Evaluate limited parallel article collection within a single batch, including batches from one publisher such as The New York Times, The Free Press, or The Economist. Start by comparing one versus two concurrent articles with staggered starts and the current pacing; measure completion time, throttling, browser challenges, and laptop resource use before increasing concurrency. Associate each article with its Chrome tab ID, preserve the original article order in the output, and support independent login/access pauses, closed tabs, and recovery after worker restart.
 
 ## Local data and permissions
 

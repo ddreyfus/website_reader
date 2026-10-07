@@ -10,7 +10,7 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
   const profile = await fs.mkdtemp(path.join(os.tmpdir(), "website-reader-handoff-"));
   const extensionPath = path.join(profile, "extension");
   await fs.mkdir(extensionPath);
-  for (const name of ["manifest.json", "popup.js", "popup.html", "popup.css", "background.js", "issue-digest-prompt.md", "email-digest-prompt.md"]) {
+  for (const name of ["collection.js", "manifest.json", "popup.js", "popup.html", "popup.css", "background.js", "issue-digest-prompt.md", "email-digest-prompt.md"]) {
     await fs.copyFile(path.join(source, name), path.join(extensionPath, name));
   }
   const manifest = JSON.parse(await fs.readFile(path.join(extensionPath, "manifest.json"), "utf8"));

@@ -1,3 +1,5 @@
+importScripts("collection.js");
+
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(async error => {
   await appendLog(`Could not enable Website Reader panel: ${error.message || String(error)}`);
 });
@@ -47,80 +49,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })().catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
     return true;
   }
-  if (message.type === "fetchArticle") {
+  if (message.type === "collectEmail") {
+    if (sender.url !== chrome.runtime.getURL("popup.html")) {
+      sendResponse({ error: "Use Website Reader's collection controls." });
+      return;
+    }
     (async () => {
-      const { collectionState: state } = await chrome.storage.local.get("collectionState");
-      if (!state?.emailId || state.status !== "running" || sender.tab?.id !== state.tabId
-        // Gmail can retain the isolated world's original URL after opening a message.
-        || (sender.tab?.url || sender.url) !== state.sourceUrl
-        || new URL(sender.url).origin !== new URL(state.sourceUrl).origin
-        || (sender.frameId != null && sender.frameId !== 0) || !Number.isInteger(message.index)
-        || message.index !== state.currentIndex) throw new Error("No active email article request.");
-      const article = state.articles[message.index];
-      if (!article) throw new Error("Unknown email article.");
-      const url = new URL(article.url);
-      if (!/^https?:$/.test(url.protocol) || url.username || url.password) throw new Error("Unsupported article URL.");
-      let tab;
-      if (Number.isInteger(state.articleTabId)) {
-        try { tab = await chrome.tabs.get(state.articleTabId); } catch { /* Closed by the user. */ }
-      }
-      if (tab && article.sourceUrl && tab.url !== article.sourceUrl && tab.url !== article.url) {
-        tab = await chrome.tabs.update(tab.id, { url: article.url });
-      }
-      tab ||= await chrome.tabs.create({ url: article.url, active: false });
-      state.articleTabId = tab.id;
-      await chrome.storage.local.set({ collectionState: state });
-      try {
-        await waitForTab(tab.id);
-        tab = await chrome.tabs.get(tab.id);
-        const destination = new URL(tab.url);
-        if (!/^https?:$/.test(destination.protocol)) throw new Error("The article did not load as a web page.");
-        if (/^From: The Free Press\s*</im.test(state.emailMarkdown || "")
-          && (!(destination.hostname === "thefp.com" || destination.hostname === "www.thefp.com")
-            || !destination.pathname.startsWith("/p/"))) {
-          await chrome.tabs.remove(tab.id);
-          sendResponse({ ignored: true, reason: "Free Press digests collect only Free Press articles", articleTabId: null });
-          return;
-        }
-        if (destination.pathname === "/" || /^\/(?:about|archive|profile|app-link|subscribe|account|login|signin|feed|search)(?:\/|$)/i.test(destination.pathname)
-          || /\.(?:jpg|jpeg|png|gif|svg|webp|pdf|zip|mp4|mp3|xml|rss)\/?$/i.test(destination.pathname)
-          || /(?:^|\.)(?:substackcdn\.com|spotify\.com|podcasts\.apple\.com|maps\.google\.com|maps\.apple\.com)$/.test(destination.hostname)) {
-          await chrome.tabs.remove(tab.id);
-          sendResponse({ ignored: true, reason: "Redirect destination is navigation, a profile, or media rather than an article", articleTabId: null });
-          return;
-        }
-        if (!await chrome.permissions.contains({ origins: [`${destination.protocol}//${destination.hostname}/*`] })) {
-          await chrome.tabs.update(tab.id, { active: true });
-          sendResponse({ error: `Site access required for ${destination.origin}. Return to Gmail and click Continue collection to grant access.`, needsUser: true, articleTabId: tab.id, url: tab.url });
-          return;
-        }
-        const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readArticleTab });
-        if (result.needsUser) {
-          await chrome.tabs.update(tab.id, { active: true });
-          sendResponse({ ...result, articleTabId: tab.id });
-          return;
-        }
-        await chrome.tabs.remove(tab.id);
-        sendResponse({ ...result, articleTabId: null });
-      } catch (error) {
-        // Leave interrupted or unreadable pages available for the user.
-        try { await chrome.tabs.update(tab.id, { active: true }); } catch { /* Tab already closed. */ }
-        sendResponse({ error: error.message || String(error), needsUser: true, articleTabId: tab.id, url: tab.url });
-      }
-    })().catch((error) => sendResponse({ error: error.message || String(error), nonRetryable: true }));
+      sendResponse(await runEmailCollection(!!message.resume, message.tabId, message.email));
+    })().catch(error => sendResponse({ error: error.message || String(error) }));
     return true;
   }
   if (message.type !== "download") return undefined;
 
   (async () => {
-    const content = message.content ?? collectionMarkdown((await chrome.storage.local.get("collectionState")).collectionState);
-    const url = `data:${message.mimeType};charset=utf-8,${encodeURIComponent(content)}`;
-    const downloadId = await chrome.downloads.download({
-      url,
-      filename: message.filename,
-      saveAs: true
-    });
-    sendResponse({ ok: true, downloadId, contentLength: content.length });
+    sendResponse(await downloadCollection(message));
   })().catch((error) => {
     sendResponse({ ok: false, error: error.message || String(error) });
   });
@@ -138,11 +80,14 @@ chrome.runtime.onStartup.addListener(async () => {
   try {
     const { collectionState: state } = await chrome.storage.local.get("collectionState");
     if (!state) return;
+    await chrome.alarms.clear("email-collection");
     // Tab IDs from the previous browser session must never be reused.
     delete state.articleTabId;
     if (state.status === "running") {
       state.status = "paused";
-      state.statusMessage = "Browser restarted. Return to the saved Gmail message or issue and continue collection.";
+      state.statusMessage = state.emailId
+        ? "Browser restarted. Continue collection from the saved email snapshot."
+        : "Browser restarted. Return to the saved issue and continue collection.";
     }
     await chrome.storage.local.set({ collectionState: state });
   } catch (error) {
@@ -152,10 +97,10 @@ chrome.runtime.onStartup.addListener(async () => {
 
 async function pauseCollectionForTab(tabId, newUrl = "") {
   const { collectionState } = await chrome.storage.local.get("collectionState");
-  if (collectionState?.status !== "running" || collectionState.tabId !== tabId) return;
+  if (collectionState?.emailId || collectionState?.status !== "running" || collectionState.tabId !== tabId) return;
   if (newUrl) {
     const url = new URL(newUrl);
-    if (collectionState.emailId ? newUrl === collectionState.sourceUrl : `${url.origin}${url.pathname}` === collectionState.editionUrl) return;
+    if (`${url.origin}${url.pathname}` === collectionState.editionUrl) return;
   }
 
   const message = "Collection tab closed or navigated away. Return to the saved edition and continue collection.";
@@ -331,7 +276,7 @@ async function readArticleTab() {
     || visible('#challenge-form, form[action*="captcha" i], iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i]');
   const login = visible('input[type="password"]')
     || text.length < 1500 && /sign in to|log in to|sign in|subscribe to (?:read|continue)|member.only|members.only/i.test(text);
-  if (challenge || login) return { needsUser: true, error: challenge ? "Browser challenge detected. Complete it in the open article tab, then return to Gmail and continue collection." : "Login or subscription required. Sign in in the open article tab, then return to Gmail and continue collection.", url: location.href };
+  if (challenge || login) return { needsUser: true, error: challenge ? "Browser challenge detected. Complete it in the open article tab, then continue collection in Website Reader." : "Login or subscription required. Sign in in the open article tab, then continue collection in Website Reader.", url: location.href };
   if (/\b404\b|page not found|article not found/i.test(heading)) return { error: "Article page not found", nonRetryable: true };
   const copy = document.documentElement.cloneNode(true);
   const original = [...document.documentElement.querySelectorAll("*")];
@@ -342,3 +287,114 @@ async function readArticleTab() {
   });
   return { html: copy.outerHTML, url: location.href, status: 200, statusText: "Rendered page", headers: {} };
 }
+
+async function downloadCollection(message) {
+  const content = message.content ?? collectionMarkdown((await chrome.storage.local.get("collectionState")).collectionState);
+  const url = `data:${message.mimeType};charset=utf-8,${encodeURIComponent(content)}`;
+  const downloadId = await chrome.downloads.download({
+    url,
+    filename: message.filename,
+    saveAs: true
+  });
+  return { ok: true, downloadId, contentLength: content.length };
+}
+
+async function fetchEmailArticle(index, markdownFromHtml) {
+  const { collectionState: state } = await chrome.storage.local.get("collectionState");
+  if (!state?.emailId || state.status !== "running" || index !== state.currentIndex) {
+    throw new Error("No active email article request.");
+  }
+  const article = state.articles[index];
+  if (!article) throw new Error("Unknown email article.");
+  const url = new URL(article.url);
+  if (!/^https?:$/.test(url.protocol) || url.username || url.password) throw new Error("Unsupported article URL.");
+  let tab;
+  if (Number.isInteger(state.articleTabId)) {
+    try { tab = await chrome.tabs.get(state.articleTabId); } catch { /* Closed by the user. */ }
+  }
+  if (tab && article.sourceUrl && tab.url !== article.sourceUrl && tab.url !== article.url) {
+    tab = await chrome.tabs.update(tab.id, { url: article.url });
+  }
+  tab ||= await chrome.tabs.create({ url: article.url, active: false });
+  state.articleTabId = tab.id;
+  await chrome.storage.local.set({ collectionState: state });
+  try {
+    await waitForTab(tab.id);
+    tab = await chrome.tabs.get(tab.id);
+    const destination = new URL(tab.url);
+    if (!/^https?:$/.test(destination.protocol)) throw new Error("The article did not load as a web page.");
+    if (/^From: The Free Press\s*</im.test(state.emailMarkdown || "")
+      && (!(destination.hostname === "thefp.com" || destination.hostname === "www.thefp.com")
+        || !destination.pathname.startsWith("/p/"))) {
+      await chrome.tabs.remove(tab.id);
+      return { ignored: true, reason: "Free Press digests collect only Free Press articles", articleTabId: null };
+    }
+    if (destination.pathname === "/" || /^\/(?:about|archive|profile|app-link|subscribe|account|login|signin|feed|search)(?:\/|$)/i.test(destination.pathname)
+      || /\.(?:jpg|jpeg|png|gif|svg|webp|pdf|zip|mp4|mp3|xml|rss)\/?$/i.test(destination.pathname)
+      || /(?:^|\.)(?:substackcdn\.com|spotify\.com|podcasts\.apple\.com|maps\.google\.com|maps\.apple\.com)$/.test(destination.hostname)) {
+      await chrome.tabs.remove(tab.id);
+      return { ignored: true, reason: "Redirect destination is navigation, a profile, or media rather than an article", articleTabId: null };
+    }
+    if (!await chrome.permissions.contains({ origins: [`${destination.protocol}//${destination.hostname}/*`] })) {
+      await chrome.tabs.update(tab.id, { active: true });
+      return { error: `Site access required for ${destination.origin}. Click Continue collection in Website Reader to grant access.`, needsUser: true, articleTabId: tab.id, url: tab.url };
+    }
+    const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readArticleTab });
+    if (result.needsUser) {
+      await chrome.tabs.update(tab.id, { active: true });
+      return { ...result, articleTabId: tab.id };
+    }
+    if (!result.error) {
+      const [{ result: extraction }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, func: markdownFromHtml, args: [result.html, result.url]
+      });
+      result.extraction = extraction;
+    }
+    delete result.html;
+    await chrome.tabs.remove(tab.id);
+    return { ...result, articleTabId: null };
+  } catch (error) {
+    // Leave interrupted or unreadable pages available for the user.
+    try { await chrome.tabs.update(tab.id, { active: true }); } catch { /* Tab already closed. */ }
+    return { error: error.message || String(error), needsUser: true, articleTabId: tab.id, url: tab.url };
+  }
+}
+
+// Persisted progress is authoritative; this flag only prevents overlapping work
+// in the current worker. The alarm retries the checkpoint if Chrome stops it.
+let emailCollectionRunning = false;
+async function runEmailCollection(resume, tabId, email) {
+  if (emailCollectionRunning) return { error: "An email collection is already running." };
+  emailCollectionRunning = true;
+  try {
+    const { collectionState: state } = await chrome.storage.local.get("collectionState");
+    if (resume) {
+      if (!state?.emailId || !["running", "paused"].includes(state.status)) {
+        return { error: "There is no saved email collection to continue." };
+      }
+      email = { editionUrl: state.editionUrl };
+    } else {
+      if (state?.status === "running") return { error: "A collection is already running." };
+      if (!email?.id || !email.sourceUrl?.startsWith("https://mail.google.com/")) {
+        return { error: "Select an expanded Gmail message first." };
+      }
+    }
+    await chrome.alarms.create("email-collection", { periodInMinutes: 0.5 });
+    const result = await collectEdition(resume, tabId, email);
+    await chrome.alarms.clear("email-collection");
+    return result;
+  } finally {
+    emailCollectionRunning = false;
+  }
+}
+
+chrome.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name !== "email-collection" || emailCollectionRunning) return;
+  const { collectionState: state } = await chrome.storage.local.get("collectionState");
+  if (state?.emailId && state.status === "running") {
+    try { await runEmailCollection(true); }
+    catch (error) { await appendLog(`Could not continue email collection: ${error.message}`); }
+  } else {
+    await chrome.alarms.clear("email-collection");
+  }
+});

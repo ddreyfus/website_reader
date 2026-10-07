@@ -82,7 +82,7 @@ test("Website Reader extension", async (t) => {
   // remain optional; the popup's grant/decline boundary is tested below.
   const extensionPath = path.join(profilePath, "extension");
   await fs.mkdir(extensionPath);
-  for (const name of ["manifest.json", "popup.js", "popup.html", "popup.css", "background.js", "issue-digest-prompt.md", "email-digest-prompt.md"]) {
+  for (const name of ["collection.js", "manifest.json", "popup.js", "popup.html", "popup.css", "background.js", "issue-digest-prompt.md", "email-digest-prompt.md"]) {
     await fs.copyFile(path.join(sourceExtensionPath, name), path.join(extensionPath, name));
   }
   const manifest = JSON.parse(await fs.readFile(path.join(extensionPath, "manifest.json"), "utf8"));
@@ -359,9 +359,6 @@ test("Website Reader extension", async (t) => {
         assert.match(state.articles[1].markdown, /Too little article text/);
         assert.doesNotMatch(state.articles[1].markdown, /interactive article/);
         assert.match(state.articles[2].markdown, /Unavailable.*No article title or body/);
-        // An extension page cannot impersonate the Gmail collection tab.
-        const rejected = await popup.evaluate(async () => await chrome.runtime.sendMessage({ type: "fetchArticle", index: 0 }));
-        assert.match(rejected.error, /No active email article request/);
       } finally {
         await gmailPage.close();
         await popup.close();
@@ -396,10 +393,11 @@ test("Website Reader extension", async (t) => {
       }
     });
 
-    for (const interruption of ["navigation", "reload"]) {
-      await t.test(`Gmail ${interruption} pauses collection and the saved message can resume`, async () => {
+    for (const interruption of ["navigation", "reload", "close"]) {
+      await t.test(`Gmail ${interruption} and closing the panel do not interrupt saved email collection`, async () => {
         await worker.evaluate(async () => await chrome.storage.local.clear());
-        emailBody = message("resume-email", `<p>Original email snapshot</p><a href="${emailArticle}">Article</a>`);
+        emailRequests = [];
+        emailBody = message("independent-email", `<p>Original email snapshot</p><a href="${emailArticle}">First article</a><a href="${otherArticle}">Second article</a>`);
         const gmailPage = await context.newPage();
         await gmailPage.goto(gmailUrl);
         let popup = await openPopup(gmailPage);
@@ -408,28 +406,36 @@ test("Website Reader extension", async (t) => {
           await popup.evaluate(() => { chrome.permissions.request = async () => true; });
           await worker.evaluate(() => { chrome.permissions.contains = globalThis.originalContains; });
           await popup.getByRole("button", { name: "Collect email and articles" }).click();
-          await popup.getByText("Collecting 1 of 1:", { exact: false }).waitFor();
+          await popup.getByText("Collecting 1 of 2:", { exact: false }).waitFor();
+          await popup.close();
           if (interruption === "reload") await gmailPage.reload();
-          else await gmailPage.evaluate(() => { location.hash = "#inbox/other-thread"; });
-          await popup.waitForFunction(async () => (await chrome.storage.local.get("collectionState")).collectionState?.status === "paused", null, { timeout: 10000 });
-          let state = await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState);
-          assert.equal(state.status, "paused");
-          await popup.close();
-          await gmailPage.evaluate(() => { location.hash = "#inbox/newsletter-thread"; });
-          popup = await openPopup(gmailPage);
-          await popup.getByRole("button", { name: "Continue collection" }).waitFor();
-          await popup.evaluate(() => { chrome.permissions.request = async () => true; });
-          await popup.getByRole("button", { name: "Continue collection" }).click();
-          await popup.getByText("Downloaded email and 1 articles.", { exact: true }).waitFor({ timeout: 15000 });
-          state = await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState);
+          else if (interruption === "close") await gmailPage.close();
+          else await gmailPage.evaluate(() => {
+            location.hash = "#inbox/other-thread";
+            document.querySelector(".a3s").textContent = "A different email";
+          });
+          // No panel or source document is needed to finish and download.
+          const observer = await context.newPage();
+          await observer.goto("https://clipboard.test/");
+          for (let attempt = 0; attempt < 200; attempt++) {
+            const state = await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState);
+            if (state.status === "completed") break;
+            await observer.waitForTimeout(100);
+          }
+          const state = await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState);
+          assert.equal(state.status, "completed");
+          assert.equal(state.currentIndex, 2);
           assert.match(state.emailMarkdown, /Original email snapshot/);
-          assert.match(state.articles[0].markdown, /Distinct full-article evidence/);
+          assert.doesNotMatch(state.emailMarkdown, /A different email/);
+          assert.ok(state.articles.every(article => /Distinct full-article evidence/.test(article.markdown)));
+          assert.deepEqual(emailRequests, [emailArticle, otherArticle]);
+          assert.equal(state.articleTabId, undefined);
+          await observer.close();
         } finally {
-          await gmailPage.close();
-          await popup.close();
+          if (!gmailPage.isClosed()) await gmailPage.close();
+          if (!popup.isClosed()) await popup.close();
         }
       });
-
     }
 
     await t.test("copies the publication-specific Economist prompt", async () => {

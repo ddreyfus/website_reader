@@ -16,20 +16,40 @@ test("Free Press redirects discard external sources before permissions or extrac
     const chrome = {
       sidePanel: { async setPanelBehavior() {} },
       runtime: { onMessage: { addListener(listener) { receive = listener; } }, onStartup: event },
+      alarms: { onAlarm: event },
       storage: { local: { async get() { return { collectionState: state }; }, async set() {} } },
       tabs: { async create() { return { id: 2 }; }, async get() { return { id: 2, status: "complete", url: destination }; }, async remove() { closed = true; }, onUpdated: event, onRemoved: event },
       permissions: { async contains() { permissionChecks++; return true; } },
-      scripting: { async executeScript() { reads++; return [{ result: { html: "Rendered story", url: destination } }]; } },
+      scripting: { async executeScript({ func }) { if (func.name === "readArticleTab") reads++; return [{ result: { html: "Rendered story", url: destination } }]; } },
       downloads: { onChanged: event }
     };
-    vm.runInNewContext(code, { chrome, URL });
-    const result = await new Promise(resolve => receive({ type: "fetchArticle", index: 0 }, { tab: { id: 1 }, url: state.sourceUrl }, resolve));
+    const context = vm.createContext({ chrome, URL, importScripts() {} });
+    vm.runInContext(code, context);
+    const result = await context.fetchEmailArticle(0, () => {});
     const allowed = destination === "https://www.thefp.com/p/story";
     assert.equal(permissionChecks, allowed ? 1 : 0);
     assert.equal(reads, allowed ? 1 : 0);
     assert.equal(!!result.ignored, !allowed);
     assert.ok(closed);
   }
+});
+
+test("page messages cannot start background email collection", async () => {
+  let receive;
+  const event = { addListener() {} };
+  const chrome = {
+    sidePanel: { async setPanelBehavior() {} },
+    runtime: {
+      getURL: path => `chrome-extension://reader/${path}`,
+      onMessage: { addListener(listener) { receive = listener; } }, onStartup: event
+    },
+    alarms: { onAlarm: event },
+    tabs: { onRemoved: event, onUpdated: event },
+    downloads: { onChanged: event }
+  };
+  vm.runInNewContext(await fs.readFile(path.resolve(import.meta.dirname, "../background.js"), "utf8"), { chrome, importScripts() {} });
+  const result = await new Promise(resolve => receive({ type: "collectEmail", resume: true }, { url: "https://mail.google.com/" }, resolve));
+  assert.match(result.error, /Use Website Reader's collection controls/);
 });
 
 test("Medium permission requests include author subdomains without granting lookalike domains", async () => {
@@ -109,7 +129,7 @@ test("newsletter articles use rendered tabs and pause for user access", async (t
   const extensionPath = path.join(profile, "extension");
   await fs.mkdir(extensionPath);
   const source = path.resolve(import.meta.dirname, "..");
-  for (const name of ["manifest.json", "popup.html", "popup.css", "popup.js", "background.js", "issue-digest-prompt.md", "email-digest-prompt.md"]) await fs.copyFile(path.join(source, name), path.join(extensionPath, name));
+  for (const name of ["collection.js", "manifest.json", "popup.html", "popup.css", "popup.js", "background.js", "issue-digest-prompt.md", "email-digest-prompt.md"]) await fs.copyFile(path.join(source, name), path.join(extensionPath, name));
   const manifest = JSON.parse(await fs.readFile(path.join(extensionPath, "manifest.json")));
   manifest.host_permissions.push("http://127.0.0.1/*", "http://localhost/*");
   await fs.writeFile(path.join(extensionPath, "manifest.json"), JSON.stringify(manifest));
@@ -162,17 +182,13 @@ test("newsletter articles use rendered tabs and pause for user access", async (t
       assert.ok(context.pages().some(page => page.url() === paused.challengeUrl));
       await popup.close();
       await worker.evaluate(() => { chrome.permissions.contains = globalThis.originalContains; });
-      await worker.evaluate(async () => {
-        const { collectionState } = await chrome.storage.local.get("collectionState");
-        collectionState.articles.push({ url: "https://maps.google.com/maps?q=address", title: "Postal address", markdown: "" });
-        await chrome.storage.local.set({ collectionState });
-      });
+      await gmail.evaluate(() => { document.querySelector(".a3s").textContent = "A different email is now open"; });
       popup = await openPopup();
       await popup.getByRole("button", { name: "Continue collection" }).click();
       await waitState(popup, "completed");
       assert.ok((await popup.evaluate(() => globalThis.requestedOrigins)).includes("http://localhost/*"));
       const done = await state();
-      assert.equal(done.articles.length, 1, "saved footer links are removed before resuming");
+      assert.equal(done.articles.length, 1, "resuming preserves the saved article queue without rereading Gmail");
       assert.match(done.articles[0].markdown, /Evidence only available after rendering/);
       assert.equal(done.articles[0].sourceUrl, `${destination}/rendered`);
       assert.equal(done.articleTabId, undefined);
@@ -254,6 +270,61 @@ test("newsletter articles use rendered tabs and pause for user access", async (t
       assert.equal(gmail.url(), gmailUrl);
       await popup.close();
     });
+    await t.test("alarm recovers a terminated worker without losing completed articles", async () => {
+      await worker.evaluate(async () => await chrome.storage.local.clear());
+      articleLinks = [`${origin}/rendered`, `${origin}/rendered?second`];
+      await gmail.reload();
+      const popup = await openPopup();
+      const session = await context.newCDPSession(gmail);
+
+      await popup.getByRole("button", { name: "Collect email and articles" }).click();
+      let checkpoint;
+      for (let attempt = 0; attempt < 200; attempt++) {
+        checkpoint = await state();
+        if (checkpoint?.currentIndex === 1 && checkpoint.status === "running") break;
+        await popup.waitForTimeout(100);
+      }
+      assert.equal(checkpoint.currentIndex, 1);
+      assert.equal(checkpoint.status, "running");
+      const { targetInfos } = await session.send("Target.getTargets");
+      const target = targetInfos.find(target => target.type === "service_worker" && target.url === worker.url());
+      assert.ok(target, "CDP found the running extension worker");
+      await worker.evaluate(() => { globalThis.recoveryTestMarker = true; });
+      const stopped = await session.send("Target.closeTarget", { targetId: target.targetId });
+      assert.equal(stopped.success, true);
+      let recovered;
+      for (let attempt = 0; attempt < 450; attempt++) {
+        recovered = await popup.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState);
+        if (recovered.status === "completed") break;
+        await popup.waitForTimeout(100);
+      }
+      assert.equal(recovered.status, "completed");
+      worker = context.serviceWorkers().find(item => item.url().endsWith("/background.js"));
+      // Playwright retains the Worker object across extension worker restarts;
+      // wait for its new execution context rather than a new Worker event.
+      let marker;
+      let inspected = false;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          marker = await worker.evaluate(() => globalThis.recoveryTestMarker);
+          inspected = true;
+          break;
+        } catch (error) {
+          if (!/Service worker restarted/.test(error.message)) throw error;
+          await popup.waitForTimeout(100);
+        }
+      }
+      assert.ok(inspected, "the restarted worker has an execution context");
+      assert.equal(marker, undefined, "the worker's previous in-memory state is gone");
+      const done = await state();
+      assert.match(done.log.join("\n"), /Continuing .* at article 2 of 2/);
+      assert.equal(done.articles[0].markdown, checkpoint.articles[0].markdown);
+      assert.equal(done.currentIndex, 2);
+      assert.match(done.articles[1].markdown, /Evidence only available after rendering/);
+      assert.equal(await worker.evaluate(async () => await chrome.alarms.get("email-collection")), undefined);
+      await popup.close();
+      await session.detach();
+    });
     await t.test("Free Press email candidates exclude external sources but retain Substack redirects", async () => {
       await gmail.evaluate(() => {
         document.querySelector(".gD").textContent = "The Free Press";
@@ -264,6 +335,33 @@ test("newsletter articles use rendered tabs and pause for user access", async (t
       const [email] = await gmail.evaluate(capture);
       assert.deepEqual(email.articles.map(article => article.url), ["https://www.thefp.com/p/story", "https://substack.com/redirect/opaque"]);
       assert.match(email.markdown, /CBS source/);
+    });
+    await t.test("paused email resumes from an unrelated tab after its source is closed", async () => {
+      await worker.evaluate(async () => await chrome.storage.local.clear());
+      loggedIn = false;
+      articleLinks = [`${origin}/locked`, `${origin}/rendered`];
+      await gmail.reload();
+      let popup = await openPopup();
+      await popup.getByRole("button", { name: "Collect email and articles" }).click();
+      await waitState(popup, "paused");
+      const original = await state();
+      const article = context.pages().find(page => page.url() === `${origin}/locked`);
+      await gmail.close();
+      await popup.close();
+      loggedIn = true;
+      await article.reload();
+      popup = await context.newPage();
+      await article.bringToFront();
+      await popup.goto(`chrome-extension://${id}/popup.html`);
+      await popup.evaluate(() => { chrome.permissions.request = async () => true; });
+      await popup.getByRole("button", { name: "Continue collection" }).click();
+      await waitState(popup, "completed");
+      const done = await state();
+      assert.equal(done.emailMarkdown, original.emailMarkdown);
+      assert.equal(done.currentIndex, 2);
+      assert.ok(done.articles.every(item => /Evidence only available after rendering/.test(item.markdown)));
+      assert.equal(done.articleTabId, undefined);
+      await popup.close();
     });
   } finally {
     await context?.close();
@@ -281,9 +379,10 @@ test("browser restart forgets stale article tab IDs without operating on tabs", 
     runtime: { onMessage: event, onStartup: { addListener(listener) { restart = listener; } } },
     tabs: { onRemoved: event, onUpdated: event },
     downloads: { onChanged: event },
+    alarms: { onAlarm: event, async clear() {} },
     storage: { local: { async get() { return { collectionState: structuredClone(state) }; }, async set(value) { state = value.collectionState; } } }
   };
-  vm.runInNewContext(await fs.readFile(path.resolve(import.meta.dirname, "../background.js"), "utf8"), { chrome });
+  vm.runInNewContext(await fs.readFile(path.resolve(import.meta.dirname, "../background.js"), "utf8"), { chrome, importScripts() {} });
   await restart();
   assert.equal(state.articleTabId, undefined);
   assert.equal(state.status, "paused");

@@ -28,6 +28,7 @@ Store icon and screenshots are not prepared. Before publishing, capture the Gmai
 
 | Permission | Purpose |
 |---|---|
+| alarms | Resume saved email collection if Chrome suspends the background worker. |
 | clipboardWrite | Copy the selected digest prompt on request. |
 | downloads | Save reading documents and logs, clean up interrupted downloads. |
 | scripting | Read the selected email or issue and attach the batch to ChatGPT when requested. |
