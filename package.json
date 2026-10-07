@@ -13,6 +13,7 @@
     "tika:install": "node scripts/install-tika.mjs",
     "bleve:build": "mkdir -p .local-mcp/bin && cd lexical-search && go build -o ../.local-mcp/bin/lexical-search .",
     "bleve:start": ".local-mcp/bin/lexical-search",
+    "bleve:install": "python3 scripts/install-bleve-launchagent.py",
     "test:bleve": "cd lexical-search && go test ./..."
   },
   "devDependencies": {

@@ -10,6 +10,28 @@ npm run bleve:build
 npm run bleve:start
 ```
 
+On macOS, keep the service running independently of Terminal:
+
+```sh
+npm run bleve:install
+```
+
+Stop any manually started instance first. The installer registers the built
+binary with launchd, starts it immediately, and enables startup at login and
+automatic restart after any exit, with a 10-second restart throttle. Sleep pauses
+the service until wake. Logs continue in `.local-mcp/bleve.log`. Run the installer
+again after moving the repository; run it after rebuilding to restart the service.
+Check status or stop the supervised service with:
+
+```sh
+launchctl print gui/$(id -u)/com.website-reader.bleve
+launchctl bootout gui/$(id -u)/com.website-reader.bleve
+```
+
+Bootout stops automatic restarts for the current login session. To also disable
+startup at future logins, remove
+`~/Library/LaunchAgents/com.website-reader.bleve.plist` after bootout.
+
 The server listens only on `127.0.0.1`. Stop it with Ctrl-C or SIGTERM. Without
 PORT it reads `~/.local-mcp/config.json`, defaulting to port 8766. The file is
 created with mode 0600 on first startup, beside the separate `runtime-key`.
