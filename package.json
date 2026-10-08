@@ -9,11 +9,12 @@
     "mcp:start": "node scripts/mcp-runtime.mjs start",
     "mcp:stop": "node scripts/mcp-runtime.mjs stop",
     "mcp:status": "node scripts/mcp-runtime.mjs status",
+    "mcp:install": "python3 scripts/install-launchagent.py tunnel",
     "test:mcp": "node --test tests/mcp.test.mjs",
     "tika:install": "node scripts/install-tika.mjs",
     "bleve:build": "mkdir -p .local-mcp/bin && cd lexical-search && go build -o ../.local-mcp/bin/lexical-search .",
     "bleve:start": ".local-mcp/bin/lexical-search",
-    "bleve:install": "python3 scripts/install-bleve-launchagent.py",
+    "bleve:install": "python3 scripts/install-launchagent.py bleve",
     "test:bleve": "cd lexical-search && go test ./..."
   },
   "devDependencies": {

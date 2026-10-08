@@ -127,14 +127,14 @@ npm run mcp:status
 npm run mcp:stop
 ```
 
-Start uses tunnel-client's managed background runtime, reusing the configured
+Before installing the LaunchAgent, Start uses tunnel-client's managed background runtime, reusing the configured
 tunnel ID, credential reference, and stdio command. It then displays runtime
 status; check that the runtime is running, healthy, and ready. Stop ends the local
 runtime and its MCP subprocess without deleting the remote tunnel or profile.
 Starting again reconnects it. Start requires the key file and does not print its
 contents. These commands use the alias `website-reader-archive`.
 
-The managed runtime writes local state, locks, logs, and health discovery under
+The unsupervised managed runtime writes local state, locks, logs, and health discovery under
 `~/Library/Application Support/tunnel-client/`. Codex's filesystem sandbox needed
 approval for start and stop to write there. Normal Terminal execution does not
 use that Codex sandbox. No elevated macOS account or `sudo` was needed.
@@ -156,17 +156,50 @@ The JSON status includes diagnostic log excerpts; review them before sharing.
 Stop any foreground `tunnel-client run` session with Ctrl-C before switching to
 the managed runtime. The managed runtime is separate from login startup.
 
-## Automatic startup
+## Automatic startup and recovery on macOS
 
-After the end-to-end call succeeds, configure a persistent runtime with absolute
-paths and a private credential reference, then install a macOS login LaunchAgent
-to start the tunnel client and restart it after failure. The tunnel client spawns
-the stdio server, so a second independently running server is unnecessary. Verify
-runtime health and a fresh ChatGPT tool call after restarting the agent.
+After configuring the profile and verifying a complete tool call, run:
 
-Do not install startup automation with placeholder tunnel IDs or credentials.
-The machine must be awake and connected for calls to work. `.local-mcp/` is ignored
-by Git and is reserved for local binaries, profiles, and runtime artifacts.
+```sh
+npm run mcp:install
+npm run mcp:status
+```
+
+The shared service installer installs `~/Library/LaunchAgents/com.website-reader.tunnel.plist`.
+It stops the old detached runtime before launching the same profile directly
+under launchd, so only one client owns the connection. The plist contains paths
+and a profile name; the runtime key remains in its private file. The existing
+profile's absolute Node command launches the archive MCP server as a child.
+
+`RunAtLoad` starts the tunnel at login. `KeepAlive` restarts it after clean or
+failed process exits, with a ten-second throttle. The client handles network
+retry/backoff while it remains alive. The health server binds an ephemeral
+loopback port and writes its URL to `.local-mcp/tunnel-health.url`.
+
+Once installed, the npm start/stop/status commands manage the LaunchAgent instead
+of the old detached runtime. Status returns the supervisor, process state/PID,
+and independent `healthy`/`ready` values. Startup may briefly report false while
+initializing. The raw `tunnel-client runtimes status` command can show stale
+detached-runtime metadata after migration; use `npm run mcp:status` instead.
+
+`npm run mcp:stop` unloads the agent intentionally, preventing immediate restart.
+`npm run mcp:start` loads it again. A deliberate stop lasts until start or the
+next login, since the installed plist remains a login item. To uninstall startup,
+stop first and remove only `com.website-reader.tunnel.plist` from LaunchAgents.
+
+Inspect supervision with `launchctl print gui/$(id -u)/com.website-reader.tunnel`.
+Client logs remain at `~/Library/Application Support/tunnel-client/logs/website-reader-archive.log`;
+launchd stdout/stderr goes to `.local-mcp/tunnel.log`. Neither is proof of remote
+reachability by itself: verify a fresh plugin `hello` and an archive search.
+In-flight requests can fail during a restart; retry with a fresh call after
+readiness returns. A local health check alone cannot establish remote reachability.
+
+Availability still requires the Mac to be awake, logged in, and online, with a
+valid tunnel credential. launchd does not repair a revoked key, upstream 429s,
+or a living but wedged client. Use health/readiness and end-to-end calls to detect
+those cases; restart the client for a local fault and inspect errors before
+retrying upstream failures. This setup does not change power settings or add a
+periodic health watchdog. `.local-mcp/` remains ignored by Git.
 
 ## Verification status
 
@@ -175,8 +208,11 @@ by Git and is reserved for local binaries, profiles, and runtime artifacts.
 - Platform sign-in and tunnel creation with the personal workspace: completed.
 - Local profile: configured with `file:/Users/david/.local-mcp/runtime-key`.
 - Private runtime key: present, mode 600; contents were not displayed.
-- Managed runtime: running, healthy, and ready; remote tunnel lookup succeeded
-  using the runtime key.
+- LaunchAgent supervision installed on October 8, 2026; health/readiness passed.
+- Process termination recovery: passed; launchd started a new PID, and fresh
+  plugin connectivity and archive-search calls succeeded afterward.
+- Runtime command regression tests: passed for start, deliberate stop,
+  health/readiness distinction, and the pre-install detached-runtime fallback.
 - ChatGPT plugin creation and connection: completed.
 - Live ChatGPT call: passed with challenge `reader-live-test-20261005-01` and
   timestamp `2026-10-05T19:11:00.910Z` (3:11 p.m. Eastern, October 5, 2026).
