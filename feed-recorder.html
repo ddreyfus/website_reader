@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Feed capture experiment</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <h1>Feed capture experiment</h1>
+      <p id="source"></p>
+      <p>Records this tab's video and page data locally for up to two minutes. Scroll normally and try expanding a post. Audio and keystrokes are excluded. Rendered page data may contain personal information.</p>
+      <p>Keep this recorder window open. Closing it discards unsaved recordings. Navigation ends the recording. Other frames and closed shadow roots are outside this initial experiment.</p>
+      <div class="controls">
+        <button id="start" type="button" disabled>Start recording</button>
+        <button id="stop" type="button" disabled>Stop recording</button>
+        <a id="video-download" hidden>Save video</a>
+        <a id="events-download" hidden>Save page and event log</a>
+      </div>
+      <p id="recording-status" role="status" aria-live="polite">Loading source tab…</p>
+      <video id="preview" muted controls hidden style="width:100%"></video>
+    </main>
+    <script src="feed-recorder.js"></script>
+  </body>
+</html>
