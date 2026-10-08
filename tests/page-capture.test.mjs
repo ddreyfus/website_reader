@@ -19,6 +19,7 @@ test("unlisted sites expose page/feed capture and preserve the saved batch", asy
     const saved = { status: "completed", editionUrl: "https://mail.google.com/::old", emailId: "old", sourceUrl: "https://mail.google.com/", filename: "old-newsletter.md", statusMessage: "Downloaded email and 15 articles.", heading: "Earlier email", articles: [], log: [] };
     await worker.evaluate(async saved => chrome.storage.local.set({ collectionState: saved }), saved);
     await context.route("http://127.0.0.1/page*", route => route.fulfill({ contentType: "text/html", body: `<!doctype html><title>Unlisted site</title><nav>Navigation outside main</nav><main><h1>Current page evidence</h1><p>Loaded rendered content.</p><p hidden>Hidden text excluded.</p><article>First loaded post.</article><article>Second loaded post.</article><a href="/linked">Source link</a><a href="/hidden" hidden>Hidden link</a><a href="javascript:void(0)">Page action</a></main>` }));
+    await context.route("http://127.0.0.1/linked", route => route.fulfill({ contentType: "text/html", body: `<article><h1>Linked article</h1><p>${"Unique linked article evidence. ".repeat(60)}</p></article>` }));
     const page = await context.newPage();
     await page.goto("http://127.0.0.1/page");
     const panel = await context.newPage();
@@ -50,6 +51,7 @@ test("unlisted sites expose page/feed capture and preserve the saved batch", asy
     const file = await panel.locator("#attachment-file").evaluate(async input => ({ name: input.files[0].name, text: await input.files[0].text() }));
     assert.match(file.name, /^page-127\.0\.0\.1-.*\.md$/);
     assert.match(file.text, /Current page evidence/);
+    assert.match(file.text, /Unique linked article evidence/);
     assert.match(file.text, /First loaded post/);
     assert.match(file.text, /Second loaded post/);
     assert.match(file.text, /\[Source link\]\(<http:\/\/127\.0\.0\.1\/linked>\)/);
@@ -60,6 +62,16 @@ test("unlisted sites expose page/feed capture and preserve the saved batch", asy
     const downloads = await worker.evaluate(async () => chrome.downloads.search({}));
     assert.equal(downloads.length, 1);
     assert.equal(decodeURIComponent(downloads[0].url.split(",").slice(1).join(",")), file.text);
+    let handedOff;
+    await panel.evaluate(() => {
+      chrome.permissions.request = async () => true;
+      chrome.runtime.sendMessage = async message => { window.testHandoff = message; return { ok: true }; };
+    });
+    await panel.click("#handoff");
+    await panel.waitForFunction(() => window.testHandoff?.type === "handoff");
+    handedOff = await panel.evaluate(() => window.testHandoff);
+    assert.equal(handedOff.content, file.text);
+    assert.equal(handedOff.filename, file.name);
     await panel.screenshot({ path: path.join(os.tmpdir(), "website-reader-page-controls.png"), fullPage: true });
     const newWindow = context.waitForEvent("page");
     await panel.click("#feed-recorder");
