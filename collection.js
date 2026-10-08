@@ -1,3 +1,31 @@
+function markdownFromHtml(html, url, minimumArticleCharacters = 400) {
+  const page = new DOMParser().parseFromString(html, "text/html");
+  const title = page.querySelector("h1")?.textContent.trim()
+    || page.querySelector('meta[property="og:title"]')?.content.trim()
+    || page.title.trim();
+  const unsupportedMarkdown = (reason = "This interactive article cannot yet be extracted reliably.") => `## ${title}\n\n[Original article](${url})\n\n> **Unsupported:** ${reason}`;
+  const interactive = new URL(url).pathname.includes("/interactive/")
+    || page.querySelector('iframe[src*="infographics.economist.com"], [data-component*="interactive" i]');
+  if (title && interactive) return { markdown: unsupportedMarkdown(), unsupported: true };
+  const source = page.querySelector("article") || page.querySelector("main");
+  if (!title || !source) return null;
+  source.querySelectorAll("script, style, nav, aside, footer, form, figure, button, [hidden], [aria-hidden='true']")
+    .forEach((element) => element.remove());
+  const lines = [`## ${title}`, "", `[Original article](${url})`, ""];
+  source.querySelectorAll("h2, h3, p, blockquote, li").forEach((element) => {
+    const text = element.textContent.replace(/\s+/g, " ").trim();
+    if (!text || text === title) return;
+    if (element.matches("h2, h3")) lines.push(`${element.tagName === "H2" ? "###" : "####"} ${text}`, "");
+    else if (element.matches("blockquote")) lines.push(`> ${text}`, "");
+    else if (element.matches("li")) lines.push(`- ${text}`);
+    else lines.push(text, "");
+  });
+  const markdown = lines.join("\n").trim();
+  return markdown.length < minimumArticleCharacters
+    ? { markdown: unsupportedMarkdown("Too little article text was available; this may be a preview or paywall."), unsupported: true }
+    : { markdown, unsupported: false };
+}
+
 function captureCurrentPage() {
   const source = document.querySelector("main") || document.querySelector("article") || document.body;
   const text = source?.innerText.trim();
@@ -5,11 +33,13 @@ function captureCurrentPage() {
   const escape = value => value.replace(/[\\`*_[\]<>]/g, "\\$&");
   const title = document.title.trim() || location.hostname;
   const capturedAt = new Date().toISOString();
-  const links = [...new Map([...source.querySelectorAll("a[href]")]
-    .filter(anchor => /^https?:/.test(anchor.href) && anchor.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
-    .map(anchor => [anchor.href, `- [${escape(anchor.innerText.replace(/\s+/g, " ").trim() || anchor.href)}](<${anchor.href}>)`])).values()];
+  const anchors = [...source.querySelectorAll("a[href]")]
+    .filter(anchor => /^https?:/.test(anchor.href) && anchor.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+  const links = [...new Map(anchors.map(anchor => [anchor.href, `- [${escape(anchor.innerText.replace(/\s+/g, " ").trim() || anchor.href)}](<${anchor.href}>)`])).values()];
   return {
     title, url: location.href,
+    articles: [...new Set(anchors.map(anchor => { const url = new URL(anchor.href); url.hash = ""; return url.href; }))]
+      .filter(url => url !== location.href.split("#")[0] && !/\.(?:jpg|jpeg|png|gif|svg|webp|pdf|zip|mp4|mp3)$/i.test(new URL(url).pathname)),
     filename: `page-${location.hostname.replace(/[^a-z0-9.-]/gi, "-")}-${capturedAt.replace(/[:.]/g, "-")}.md`,
     content: `# ${escape(title)}\n\nSource: <${location.href}>\n\nCaptured: ${capturedAt}\n\n> Snapshot of loaded, rendered page text. More content may appear after scrolling or expanding sections.\n\n${text}\n${links.length ? `\n## Page links\n\n${links.join("\n")}\n` : ""}`
   };
@@ -51,34 +81,6 @@ async function collectEdition(resume, tabId, email = null) {
       const heading = `${page.title} ${page.querySelector("h1")?.textContent || ""}`;
       return /(?:verify (?:that )?you are human|unusual traffic|just a moment|attention required|access denied)/i.test(heading)
         || page.querySelector('#challenge-form, form[action*="captcha" i], iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i]');
-    }
-
-    function markdownFromHtml(html, url, minimumArticleCharacters = 400) {
-      const page = new DOMParser().parseFromString(html, "text/html");
-      const title = page.querySelector("h1")?.textContent.trim()
-        || page.querySelector('meta[property="og:title"]')?.content.trim()
-        || page.title.trim();
-      const unsupportedMarkdown = (reason = "This interactive article cannot yet be extracted reliably.") => `## ${title}\n\n[Original article](${url})\n\n> **Unsupported:** ${reason}`;
-      const interactive = new URL(url).pathname.includes("/interactive/")
-        || page.querySelector('iframe[src*="infographics.economist.com"], [data-component*="interactive" i]');
-      if (title && interactive) return { markdown: unsupportedMarkdown(), unsupported: true };
-      const source = page.querySelector("article") || page.querySelector("main");
-      if (!title || !source) return null;
-      source.querySelectorAll("script, style, nav, aside, footer, form, figure, button, [hidden], [aria-hidden='true']")
-        .forEach((element) => element.remove());
-      const lines = [`## ${title}`, "", `[Original article](${url})`, ""];
-      source.querySelectorAll("h2, h3, p, blockquote, li").forEach((element) => {
-        const text = element.textContent.replace(/\s+/g, " ").trim();
-        if (!text || text === title) return;
-        if (element.matches("h2, h3")) lines.push(`${element.tagName === "H2" ? "###" : "####"} ${text}`, "");
-        else if (element.matches("blockquote")) lines.push(`> ${text}`, "");
-        else if (element.matches("li")) lines.push(`- ${text}`);
-        else lines.push(text, "");
-      });
-      const markdown = lines.join("\n").trim();
-      return markdown.length < minimumArticleCharacters
-        ? { markdown: unsupportedMarkdown("Too little article text was available; this may be a preview or paywall."), unsupported: true }
-        : { markdown, unsupported: false };
     }
 
     const nyt = location.hostname === "www.nytimes.com" && location.pathname === "/";

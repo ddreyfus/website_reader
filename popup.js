@@ -15,14 +15,17 @@ capturePageButton.addEventListener("click", async () => {
   try {
     if (!source?.id || !/^https?:/.test(source.url || "")) throw new Error("Open an HTTP or HTTPS page first.");
     // Request access synchronously in the click handler, before any await.
-    const url = new URL(source.url);
-    const granted = await chrome.permissions.request({ origins: [`${url.protocol}//${url.hostname}/*`] });
+    // Linked articles may be hosted on other sites.
+    const granted = await chrome.permissions.request({ origins: ["https://*/*", "http://*/*"] });
     if (!granted) throw new Error("Page access was declined.");
     const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (active?.id !== source.id || active.url !== source.url) throw new Error("The current page changed. Select Capture current page again.");
     const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: source.id }, func: captureCurrentPage });
     if (!result?.content) throw new Error(result?.error || "No readable text was found on this page.");
     if (result.url !== source.url) throw new Error("The page navigated during capture. Try again on the intended page.");
+    const collected = await chrome.runtime.sendMessage({ type: "capturePageArticles", articles: result.articles });
+    if (!collected?.ok) throw new Error(collected?.error || "Linked article collection failed.");
+    result.content += collected.markdown;
     await download(result.content, result.filename, "text/markdown");
     const files = new DataTransfer();
     files.items.add(new File([result.content], result.filename, { type: "text/markdown" }));
@@ -374,6 +377,7 @@ async function runCollection(resume, permissionRequest = null) {
     if (!resume && Number.isInteger(collectionState?.articleTabId)) {
       try { await chrome.tabs.remove(collectionState.articleTabId); } catch { /* Already closed. */ }
     }
+    if (!email) await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["collection.js"] });
     const result = email
       ? await chrome.runtime.sendMessage({ type: "collectEmail", email, tabId: tab.id })
       : (await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectEdition, args: [resume, tab.id] }))[0].result;
@@ -503,7 +507,7 @@ async function loadState() {
     const { collectionState, latestLog = "" } = await chrome.storage.local.get(["collectionState", "latestLog"]);
     const [current] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!capturingPage && (current?.id !== currentPageTab?.id || current?.url !== currentPageTab?.url)) {
-      pageCaptureStatus.textContent = "Capture loaded page text and links, or record the feed while you scroll.";
+      pageCaptureStatus.textContent = "Capture this page and its linked articles, or record the feed while you scroll.";
     }
     currentPageTab = current;
     const readablePage = /^https?:/.test(currentPageTab?.url || "");
@@ -529,7 +533,7 @@ async function loadState() {
     collectButton.textContent = gmail ? "Collect email and articles" : `Collect ${publication} issue`;
     collectButton.disabled = !activeEditionUrl;
     if (!activeEditionUrl && !gmail) {
-      setStatus(readablePage ? "Capture this page's loaded text and links, or record a scrolling feed." : "Open an HTTP or HTTPS page to capture its text or record a feed.");
+      setStatus(readablePage ? "Capture this page and its linked articles, or record a scrolling feed." : "Open an HTTP or HTTPS page to capture its text or record a feed.");
     }
     if (latestLog) {
       logOutput.textContent = latestLog;

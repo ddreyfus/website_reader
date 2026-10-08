@@ -49,7 +49,7 @@ test('starting on another issue replaces a paused batch but blocks a running bat
     chrome: {
       storage: { local: { async get() { return { collectionState: saved }; } } },
       tabs: { async remove(id) { assert.equal(id, 2); closed++; } },
-      scripting: { async executeScript({ args }) { assert.equal(args[0], false); started++; return [{ result: { completed: true } }]; } }
+      scripting: { async executeScript({ args, files }) { if (files) return []; assert.equal(args[0], false); started++; return [{ result: { completed: true } }]; } }
     }
   });
   vm.runInContext(code.slice(code.indexOf('async function runCollection('), code.indexOf('async function collectFromClick(')), context);

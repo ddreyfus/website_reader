@@ -49,6 +49,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })().catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
     return true;
   }
+  if (message.type === "capturePageArticles") {
+    (async () => {
+      if (sender.url !== chrome.runtime.getURL("popup.html")) throw new Error("Use Website Reader's capture button.");
+      const sections = [];
+      for (const url of message.articles) {
+        const destination = new URL(url);
+        if (!/^https?:$/.test(destination.protocol) || destination.username || destination.password) continue;
+        let tab;
+        try {
+          if (!await chrome.permissions.contains({ origins: [`${destination.origin}/*`] })) {
+            throw new Error(`Site access required for ${destination.origin}; grant access and capture again.`);
+          }
+          tab = await chrome.tabs.create({ url, active: false });
+          await waitForTab(tab.id);
+          const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readArticleTab });
+          if (result.error || result.needsUser) throw new Error(result.error || "Article requires login or browser verification.");
+          const [{ result: extraction }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: markdownFromHtml, args: [result.html, result.url] });
+          if (extraction) sections.push(extraction.markdown);
+        } catch (error) {
+          sections.push(`## Unavailable linked page\n\nSource: <${url}>\n\n> **Unavailable:** ${error.message}`);
+        } finally {
+          if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
+        }
+      }
+      sendResponse({ ok: true, markdown: sections.length ? `\n---\n\n${sections.join("\n\n---\n\n")}\n` : "" });
+    })().catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message.type === "collectEmail") {
     if (sender.url !== chrome.runtime.getURL("popup.html")) {
       sendResponse({ error: "Use Website Reader's collection controls." });

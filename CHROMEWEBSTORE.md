@@ -4,7 +4,7 @@ Last updated: 2026-10-08. Local development draft; no submission requested.
 
 The feed capture experiment adds a separate recorder window with local video and page/event-log downloads. Refresh screenshots before any submission. This experiment is not yet validated on signed-in social feeds.
 
-The integration branch exposes Capture current page and Record scrolling feed directly on HTTP/HTTPS sites. Current-page capture saves loaded rendered text and links as Markdown and selects it for ChatGPT handoff, preserving the saved issue/email batch. Unsupported sites hide issue collection, and unrelated completed email status no longer replaces current-page guidance.
+The integration branch exposes Capture current page and Record scrolling feed directly on HTTP/HTTPS sites. Current-page capture saves loaded rendered text and linked article bodies together as Markdown and selects it for ChatGPT handoff, preserving the saved issue/email batch. Unsupported sites hide issue collection, and unrelated completed email status no longer replaces current-page guidance.
 
 Free Press digests collect only Free Press articles. External email links and externally redirected sources are excluded from article extraction.
 

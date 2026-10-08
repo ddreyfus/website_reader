@@ -94,15 +94,17 @@ on sites outside the publication issue list. Unsupported pages do not show a
 disabled issue-collection button. A completed email batch's status is shown only
 when viewing that batch; its saved attachment remains available separately.
 
-**Capture current page** requests access to that site, saves a Markdown snapshot
-of its loaded rendered text and HTTP/HTTPS links, and selects that file for
-**Open in ChatGPT**. It prefers the page's main content, then an article, then
-the body. This action preserves the saved publication/email batch. The snapshot
-includes currently loaded text, including content below the viewport; additional
-content can appear after scrolling or expanding sections. Links are listed in a
-separate section. Iframes, shadow roots, canvas/image text, and linked pages are
-outside this capture. The selected attachment stays in the panel until it closes;
-the downloaded Markdown remains available afterward.
+**Capture current page** requests HTTP/HTTPS site access so it can read linked
+articles across publishers. It captures the source page's loaded rendered text,
+reads its visible links in background tabs, and saves the page and extracted
+article bodies together in one Markdown file selected for **Open in ChatGPT**.
+It reuses the article collector's rendered-page reader and Markdown extraction.
+Unreadable links are marked unavailable; non-article pages without an extractable
+body are omitted. It follows only the source page's links, without recursion.
+The saved publication/email batch is preserved. Content that requires scrolling,
+expansion, login, or browser verification may remain incomplete. The selected
+attachment stays in the panel until it closes; the downloaded Markdown remains
+available afterward.
 
 **Record scrolling feed** opens the experiment recorder in a separate window.
 Select **Start recording**, scroll normally, stop, and save both its WebM video
