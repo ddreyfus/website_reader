@@ -257,9 +257,11 @@ function renderState(state, showStatus = true) {
   attachmentFile.disabled = handoffRunning;
   useBatchButton.disabled = handoffRunning;
   handoffButton.disabled = handoffRunning || (!file && state?.status !== "completed");
-  attachmentStatus.textContent = file ? `ChatGPT attachment: ${file.name}`
-    : state?.status === "completed" ? `ChatGPT attachment: ${state.filename}` : "No completed collection or file selected.";
+  attachmentStatus.textContent = file ? `File to open in ChatGPT: ${file.name}\nSource: chosen file.`
+    : state?.status === "completed" ? `File to open in ChatGPT: ${state.filename}\nSource: latest completed collection.`
+      : "No file ready for ChatGPT. Choose a file or complete a collection.";
   useBatchButton.hidden = !file;
+  useBatchButton.textContent = state?.status === "completed" ? "Use saved collection instead" : "Clear chosen file";
   const sameEdition = state?.editionUrl === activeEditionUrl;
   const active = ["running", "paused"].includes(state?.status);
   const resumable = state?.status === "paused";
@@ -276,7 +278,7 @@ function renderState(state, showStatus = true) {
     downloadLogButton.disabled = false;
   }
   if (!showStatus) return;
-  if ((sameEdition || state?.emailId) && state.statusMessage) setStatus(state.statusMessage, state.challengeUrl);
+  if (sameEdition && state.statusMessage) setStatus(state.statusMessage, state.challengeUrl);
   else if (active) setStatus(`A collection is ${state.status} for ${state.editionUrl}. ${resumable ? "Continue it or replace it with the current page." : "Wait for it to finish before starting another."}`, state.challengeUrl);
 }
 
@@ -419,7 +421,7 @@ handoffButton.addEventListener("click", async () => {
     const content = file ? await file.text() : undefined;
     if (file && !content.trim()) throw new Error("The selected file is empty.");
     if (!file) await navigator.clipboard.writeText(await digestPrompt(collectionState.sourceUrl));
-    setStatus(file ? `Opening ChatGPT with ${file.name}.` : "Opening ChatGPT with the collected file. The matching digest prompt is copied.");
+    setStatus(`Opening ChatGPT with ${file ? file.name : collectionState.filename}.${file ? "" : " The matching digest prompt is copied."}`);
     const result = await chrome.runtime.sendMessage({ type: "handoff", ...(file ? { content, filename: file.name } : {}) });
     if (!result?.ok) throw new Error(result?.error || "The ChatGPT handoff failed.");
   } catch (error) { setStatus(error.message || "The ChatGPT handoff failed."); }

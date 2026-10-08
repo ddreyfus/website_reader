@@ -64,6 +64,7 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
         await unrelated.bringToFront();
         await popup.goto(`chrome-extension://${extensionId}/popup.html`);
         await popup.getByRole("button", { name: "Open in ChatGPT" }).waitFor();
+        await popup.waitForFunction(() => document.querySelector("#attachment-status").textContent === "File to open in ChatGPT: reading-batch.md\nSource: latest completed collection.");
         await popup.evaluate(() => { chrome.permissions.request = async () => true; });
         const chat = await context.newPage();
         await chat.goto("https://chatgpt.com/");
@@ -112,7 +113,7 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
       await popup.evaluate(() => { chrome.permissions.request = async () => true; });
       const content = "# Chosen issue\n\nExact file text — café.\n";
       await popup.locator("#attachment-file").setInputFiles({ name: "chosen.md", mimeType: "text/markdown", buffer: Buffer.from(content) });
-      assert.match(await popup.locator("#attachment-status").textContent(), /chosen.md/);
+      assert.equal(await popup.locator("#attachment-status").textContent(), "File to open in ChatGPT: chosen.md\nSource: chosen file.");
       const chat = await context.newPage();
       await chat.goto("https://chatgpt.com/");
       await popup.bringToFront();
@@ -122,7 +123,7 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
       assert.equal(await chat.locator('[aria-label="Attach files"]').evaluate(input => input.files[0].name), "chosen.md");
       assert.deepEqual(await worker.evaluate(async () => (await chrome.storage.local.get("collectionState")).collectionState), before);
       await popup.getByRole("button", { name: "Use saved collection instead" }).click();
-      assert.match(await popup.locator("#attachment-status").textContent(), /reading-batch.md/);
+      assert.equal(await popup.locator("#attachment-status").textContent(), "File to open in ChatGPT: reading-batch.md\nSource: latest completed collection.");
       await chat.close();
       await popup.close();
     });
