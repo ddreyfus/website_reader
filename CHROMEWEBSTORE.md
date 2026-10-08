@@ -1,6 +1,8 @@
 # Chrome Web Store Listing — Website Reader
 
-Last updated: 2026-10-06. Local development draft; no submission requested.
+Last updated: 2026-10-08. Local development draft; no submission requested.
+
+The feed capture experiment adds a separate recorder window with local video and page/event-log downloads. Refresh screenshots before any submission. This experiment is not yet validated on signed-in social feeds.
 
 Free Press digests collect only Free Press articles. External email links and externally redirected sources are excluded from article extraction.
 
@@ -29,6 +31,8 @@ Store icon and screenshots are not prepared. Before publishing, capture the Gmai
 | Permission | Purpose |
 |---|---|
 | alarms | Resume saved email collection if Chrome suspends the background worker. |
+| activeTab | Grant temporary access to the feed tab when the toolbar extension is invoked. |
+| tabCapture | Record the selected feed tab's visible content after the user starts the experiment. Audio is excluded. |
 | clipboardWrite | Copy the selected digest prompt on request. |
 | downloads | Save reading documents and logs, clean up interrupted downloads. |
 | scripting | Read the selected email or issue and attach the batch to ChatGPT when requested. |
@@ -37,12 +41,14 @@ Store icon and screenshots are not prepared. Before publishing, capture the Gmai
 | tabs | Identify the current reading page, detect navigation, and open ChatGPT. |
 | www.economist.com, alumni.berkeley.edu, cacm.acm.org, www.nytimes.com | Read supported issue pages and retrieve their linked articles. |
 | mail.google.com | Capture the selected expanded email, including sender, date, body, and links. |
-| Optional HTTP/HTTPS sites | Read article tabs linked by the selected email; request linked hosts and ask for redirected hosts on Continue. |
+| Optional HTTP/HTTPS sites | Read article tabs linked by the selected email; request linked hosts and ask for redirected hosts on Continue. The feed recorder also requests its selected source site's access to capture page data. |
 | Optional chatgpt.com | Attach the completed batch to a ChatGPT draft when the user selects Open in ChatGPT. |
 
 ## Privacy and data use
 
 The extension handles selected website content and personal communications, including sender addresses and any personal information present in the chosen email. The latest batch, source URLs, progress, and logs stay in local extension storage until replaced or removed. Downloaded files remain until the user deletes them.
+
+Feed recording keeps video, initial page HTML, page mutations, viewport text geometry, URLs, and scroll/click/resize/navigation/visibility events in the recorder window's memory until closed. These may contain personal information, including page content outside the viewport. The user can save local WebM and JSON files; the experiment does not upload them. Audio and keyboard events are excluded, although text typed into rendered page content may appear in DOM records. Recording stops at two minutes, at the page-log size limit, or when the source navigates/closes. Closing the recorder discards unsaved data.
 
 Article requests use the browser session; destination sites receive normal requests, and tracking links may register clicks. Email text is not sent to linked sites. Chosen files are read only when Open in ChatGPT is selected and are not saved in extension storage. Open in ChatGPT sends the selected file or completed document to ChatGPT; submission of the chat remains under user control. There is no developer telemetry or developer-operated collection server.
 
@@ -60,6 +66,7 @@ Local unpacked installation only. Publisher, public contact, support URL, distri
 
 | Version | Date | Changes | Status |
 |---|---|---|---|
+| 0.1.0 | 2026-10-08 | Experimental feed recorder with tab video and timestamped raw DOM/event data. | Local experiment |
 | 0.1.0 | 2026-10-06 | Digest archive comparisons use a bounded NEW/ADDS/REPEAT familiarity test. | Local draft |
 | 0.1.0 | 2026-10-06 | Existing Markdown/text attachment selection, explicit paused-batch replacement, and Economist weekly-edition navigation. Refresh control screenshots. | Local draft |
 | 0.1.0 | 2026-10-05 | Recognize the current ChatGPT composer without relying on its former element ID. | Local draft |

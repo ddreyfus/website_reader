@@ -10,6 +10,8 @@ Website Reader is a Chrome/Chromium extension that collects an entire publicatio
 
 ## Capabilities
 
+The `codex/feed-capture-experiment` branch includes an opt-in [feed recording experiment](feed-capture-experiment.md) for investigating scrolling feeds before writing a post parser.
+
 - Finds article links on supported issue pages and removes duplicate links.
 - Fetches subscriber-accessible articles through the current signed-in browser session.
 - Extracts article headings and readable text into Markdown.

@@ -1,4 +1,13 @@
 const collectButton = document.querySelector("#collect");
+document.querySelector("#feed-recorder").addEventListener("click", async () => {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id || !/^https?:/.test(tab.url || "")) throw new Error("Open an HTTP or HTTPS feed first.");
+    await chrome.windows.create({ url: chrome.runtime.getURL(`feed-recorder.html?tabId=${tab.id}`), type: "popup", width: 540, height: 600 });
+  } catch (error) {
+    document.querySelector("#feed-recorder-status").textContent = error.message;
+  }
+});
 const continueButton = document.querySelector("#continue");
 const skipButton = document.querySelector("#skip");
 const handoffButton = document.querySelector("#handoff");
