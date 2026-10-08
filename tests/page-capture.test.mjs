@@ -16,6 +16,15 @@ test("unlisted sites expose page/feed capture and preserve the saved batch", asy
     let [worker] = context.serviceWorkers();
     worker ||= await context.waitForEvent("serviceworker");
     const extensionId = new URL(worker.url()).host;
+    // Attach Playwright before navigation so background-tab fixtures are routed.
+    await worker.evaluate(() => {
+      const create = chrome.tabs.create.bind(chrome.tabs);
+      chrome.tabs.create = async options => {
+        const tab = await create({ ...options, url: "about:blank" });
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return chrome.tabs.update(tab.id, { url: options.url });
+      };
+    });
     const saved = { status: "completed", editionUrl: "https://mail.google.com/::old", emailId: "old", sourceUrl: "https://mail.google.com/", filename: "old-newsletter.md", statusMessage: "Downloaded email and 15 articles.", heading: "Earlier email", articles: [], log: [] };
     await worker.evaluate(async saved => chrome.storage.local.set({ collectionState: saved }), saved);
     await context.route("http://127.0.0.1/page*", route => route.fulfill({ contentType: "text/html", body: `<!doctype html><title>Unlisted site</title><nav>Navigation outside main</nav><main><h1>Current page evidence</h1><p>Loaded rendered content.</p><p hidden>Hidden text excluded.</p><article>First loaded post.</article><article>Second loaded post.</article><a href="/linked">Source link</a><a href="/hidden" hidden>Hidden link</a><a href="javascript:void(0)">Page action</a></main>` }));
