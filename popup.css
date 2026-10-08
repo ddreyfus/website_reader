@@ -135,3 +135,5 @@ pre {
 
 #attachment-file { max-width: 100%; }
 #attachment-status { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+
+#page-capture-progress { width: 100%; }

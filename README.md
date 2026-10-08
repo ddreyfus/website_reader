@@ -96,11 +96,16 @@ when viewing that batch; its saved attachment remains available separately.
 
 **Capture current page** requests HTTP/HTTPS site access so it can read linked
 articles across publishers. It captures the source page's loaded rendered text,
-reads its visible links in background tabs, and saves the page and extracted
+discovers article links across the listing (including sibling article cards),
+reads them in background tabs, and saves the page and extracted
 article bodies together in one Markdown file selected for **Open in ChatGPT**.
 It reuses the article collector's rendered-page reader and Markdown extraction.
-Unreadable links are marked unavailable; non-article pages without an extractable
-body are omitted. It follows only the source page's links, without recursion.
+Unreadable or unextractable linked pages are marked unavailable. It follows only
+the source page's links, without recursion. Article-card headings
+are preferred over topic/navigation links. The panel shows an article progress
+bar and the current URL, then reports collected and unavailable counts.
+Captured website files copy a website-collection digest prompt during ChatGPT
+handoff; Gmail newsletters retain their email-specific provenance prompt.
 The saved publication/email batch is preserved. Content that requires scrolling,
 expansion, login, or browser verification may remain incomplete. The selected
 attachment stays in the panel until it closes; the downloaded Markdown remains
@@ -139,7 +144,7 @@ Gmail filenames use `newsletter-<sending-domain>-<message-id>.md`. The file pres
 
 The email prompt uses question → claim → evidence → open questions → why this might be interesting, with a position-and-reasoning summary for opinion. It distinguishes the newsletter's claims from the linked article's evidence and permits an empty reading shortlist.
 
-Only visible, expanded message bodies are captured, not the inbox or collapsed messages. Gmail's DOM can change. Clipped emails are labeled partial; hidden content is not captured. Articles use normal browser navigation with your signed-in session and are read from the rendered page. Redirect destinations require extension access before their text can be read. Login and challenge detection is heuristic; some paywalls may expose only a preview, which is labeled when the extracted text is too short. Collection does not bypass access restrictions. After collection starts, the email text and article queue are saved. You can close, reload, or navigate away from Gmail and close Website Reader while collection continues in the background. Reopen Website Reader on any tab to continue or skip a paused article. A background alarm resumes saved progress if Chrome suspends the extension worker; restarting Chrome pauses collection until you continue it.
+Only visible, expanded message bodies are captured, not the inbox or collapsed messages. Gmail's DOM can change. Clipped emails are labeled partial; hidden content is not captured. Articles use normal browser navigation with your signed-in session and are read from the rendered page. Redirect destinations require extension access before their text can be read. Login and challenge detection is heuristic; short extractions are labeled incomplete without assuming a paywall. Article bodies are identified across content containers rather than assuming the first article element contains the story. Collection does not bypass access restrictions. After collection starts, the email text and article queue are saved. You can close, reload, or navigate away from Gmail and close Website Reader while collection continues in the background. Reopen Website Reader on any tab to continue or skip a paused article. A background alarm resumes saved progress if Chrome suspends the extension worker; restarting Chrome pauses collection until you continue it.
 
 ## Resume an interrupted collection
 

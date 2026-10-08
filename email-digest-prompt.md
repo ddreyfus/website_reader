@@ -36,7 +36,11 @@ Do not attribute newsletter wording to the article's author. A newsletter saying
 
 ## Summaries
 
-Use **question → claim → evidence → open questions → why this might be interesting** as the analytical sequence. Keep it explicit but compact: two sentences should normally suffice; use up to five when necessary.
+Begin with a tight **Summary**, using **question → claim → evidence → open questions → why this might be interesting** as the analytical sequence. Keep it explicit but compact: two sentences should normally suffice; use up to five when necessary.
+
+Keep the tight summary first. **When the source develops a substantial argument whose reasoning would be lost in that summary, add a separate, longer “Argument” account.** Explain the central thesis, the main premises and steps connecting them to the conclusion, the evidence or examples doing real work, consequential assumptions, and any important counterarguments the source addresses. Make the argument understandable without requiring the reader to reconstruct it from the short summary. Distinguish the author's reasoning from your assessment of its strengths and gaps.
+
+Use judgment: length, topic, or an opinion label alone does not warrant expansion. Add the longer account when the reasoning is substantive and its structure matters to understanding or evaluating the story; omit it for routine reporting, thin assertions, or repetition of the short summary. Use as much space as the argument warrants, usually one or a few focused paragraphs. The sentence limits for the tight summary do not apply to this separate account. Reconstruct only reasoning supported by the available source; do not invent missing premises or treat an email teaser as the full article's argument.
 
 State what the source actually establishes, what it infers, and what remains uncertain. Distinguish reported evidence from confidence, anecdotes, speculation, and promotion. Do not invent a question, evidence, or objection to complete the sequence.
 

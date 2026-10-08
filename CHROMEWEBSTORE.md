@@ -4,7 +4,9 @@ Last updated: 2026-10-08. Local development draft; no submission requested.
 
 The feed capture experiment adds a separate recorder window with local video and page/event-log downloads. Refresh screenshots before any submission. This experiment is not yet validated on signed-in social feeds.
 
-The integration branch exposes Capture current page and Record scrolling feed directly on HTTP/HTTPS sites. Current-page capture saves loaded rendered text and linked article bodies together as Markdown and selects it for ChatGPT handoff, preserving the saved issue/email batch. Unsupported sites hide issue collection, and unrelated completed email status no longer replaces current-page guidance.
+The toolbar opens the side panel through an explicit action click so Chrome grants source-tab recording access. Click the toolbar on the intended source tab before opening the recorder.
+
+The integration branch exposes Capture current page and Record scrolling feed directly on HTTP/HTTPS sites. Current-page capture discovers articles across the full listing, shows per-article progress, and saves loaded rendered text and linked article bodies together as Markdown and selects it for ChatGPT handoff, preserving the saved issue/email batch. Unsupported sites hide issue collection, and unrelated completed email status no longer replaces current-page guidance.
 
 Free Press digests collect only Free Press articles. External email links and externally redirected sources are excluded from article extraction.
 
@@ -43,7 +45,7 @@ Store icon and screenshots are not prepared. Before publishing, capture the Gmai
 | tabs | Identify the current reading page, detect navigation, and open ChatGPT. |
 | www.economist.com, alumni.berkeley.edu, cacm.acm.org, www.nytimes.com | Read supported issue pages and retrieve their linked articles. |
 | mail.google.com | Capture the selected expanded email, including sender, date, body, and links. |
-| Optional HTTP/HTTPS sites | Read article tabs linked by the selected email; request linked hosts and ask for redirected hosts on Continue. Current-page capture and the feed recorder request access to their selected source site to read page data. |
+| Optional HTTP/HTTPS sites | Read article tabs linked by the selected email; request linked hosts and ask for redirected hosts on Continue. Current-page capture requests HTTP/HTTPS access to read the source and linked articles across sites. The feed recorder requests access to its selected source site. |
 | Optional chatgpt.com | Attach the completed batch to a ChatGPT draft when the user selects Open in ChatGPT. |
 
 ## Privacy and data use
@@ -52,9 +54,9 @@ The extension handles selected website content and personal communications, incl
 
 Feed recording keeps video, initial page HTML, page mutations, viewport text geometry, URLs, and scroll/click/resize/navigation/visibility events in the recorder window's memory until closed. These may contain personal information, including page content outside the viewport. The user can save local WebM and JSON files; the experiment does not upload them. Audio and keyboard events are excluded, although text typed into rendered page content may appear in DOM records. Recording stops at two minutes, at the page-log size limit, or when the source navigates/closes. Closing the recorder discards unsaved data.
 
-Current-page capture requests access to the source site and reads loaded rendered text and links in its main content, article, or body. The Markdown is downloaded locally and held as the selected panel attachment; closing the panel discards that in-memory selection. The existing saved batch is preserved. Selecting Open in ChatGPT sends that page capture to ChatGPT through the existing chosen-file handoff.
+Current-page capture requests HTTP/HTTPS access and reads loaded rendered text and links in its main content, article, or body, then reads linked articles in background tabs. Capture does not modify live page content or operate page controls. The Markdown is downloaded locally and held as the selected panel attachment; closing the panel discards that in-memory selection. The existing saved batch is preserved. Selecting Open in ChatGPT sends that page capture to ChatGPT through the existing chosen-file handoff and copies a website-collection prompt matched to its source. Gmail newsletters use a separate email-specific digest prompt.
 
-Article requests use the browser session; destination sites receive normal requests, and tracking links may register clicks. Email text is not sent to linked sites. Chosen files are read only when Open in ChatGPT is selected and are not saved in extension storage. Open in ChatGPT sends the selected file or completed document to ChatGPT; submission of the chat remains under user control. There is no developer telemetry or developer-operated collection server.
+Article requests use the browser session; destination sites receive normal requests, and tracking links may register clicks. Email text is not sent to linked sites. Chosen files are read only when Open in ChatGPT is selected and are not saved in extension storage. Open in ChatGPT sends the selected file or completed document to ChatGPT; submission of the chat remains under user control. Attachment interaction is restricted to the exact HTTPS origin https://chatgpt.com; other origins are rejected before any page access. There is no developer telemetry or developer-operated collection server.
 
 Data is not sold, used for unrelated purposes, or used for lending decisions. Users can remove optional site access in Chrome and remove extension data by uninstalling the extension. ChatGPT uploads are governed by that service's data controls.
 

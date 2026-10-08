@@ -1,5 +1,30 @@
 # Feed capture experiment
 
+## Status: incomplete, parked (2026-10-08)
+
+The `codex/feed-capture-integration` branch preserves the recorder and the
+in-progress page/article capture improvements. They are not ready to merge into
+main. The Facebook investigation is paused; no Facebook post parser has been
+implemented.
+
+A signed-in Facebook recording produced a matching WebM and JSON event log and
+stopped cleanly. The JSON contains message blocks, accessibility labels, image
+descriptions, and DOM mutations as posts load and disappear. Some longer text
+appears in separate attachment descriptions; this is not proof that expanded
+post bodies are available without activating See more. Post boundary detection,
+shared-post handling, complete-message extraction, and deduplication remain
+unvalidated. Accessibility labels help identify authors and controls but did not
+provide complete versions of the truncated messages examined.
+
+The toolbar now uses an explicit action click to grant recording access. The
+targeted article-tab and feed-capture regressions passed (15 tests); the native
+video fixture uses a capture allowlist and does not validate the real toolbar
+permission flow. The live recording predates this written status and is evidence
+of capture, not parser correctness. Private recordings remain outside Git.
+
+UI cleanup should proceed on a separate branch from main, without bringing these
+experimental controls or extraction changes with it.
+
 The first task is to preserve evidence before attempting to identify posts. This branch adds recording only; it does not parse, summarize, or automatically scroll Facebook or LinkedIn.
 
 ## Try a session

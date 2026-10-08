@@ -7,12 +7,24 @@ function markdownFromHtml(html, url, minimumArticleCharacters = 400) {
   const interactive = new URL(url).pathname.includes("/interactive/")
     || page.querySelector('iframe[src*="infographics.economist.com"], [data-component*="interactive" i]');
   if (title && interactive) return { markdown: unsupportedMarkdown(), unsupported: true };
-  const source = page.querySelector("article") || page.querySelector("main");
-  if (!title || !source) return null;
-  source.querySelectorAll("script, style, nav, aside, footer, form, figure, button, [hidden], [aria-hidden='true']")
+  page.querySelectorAll("script, style, nav, aside, footer, form, figure, button, [hidden], [aria-hidden='true'], [role=navigation], [itemprop=author], .author-bio, .author-description, .related-articles, .related-stories, .comments, #comments")
     .forEach((element) => element.remove());
+  const score = element => {
+    const paragraphs = (element.matches("p, blockquote, pre") ? [element] : [...element.querySelectorAll("p, blockquote, pre")])
+      .filter(paragraph => !paragraph.parentElement.closest("p, blockquote, pre"));
+    const prose = paragraphs.reduce((total, paragraph) => total + paragraph.textContent.trim().length
+      - [...paragraph.querySelectorAll("a")].reduce((length, link) => length + link.textContent.length, 0), 0);
+    return prose * prose / Math.max(prose, element.textContent.trim().length, 1);
+  };
+  const bodies = [...page.querySelectorAll('[itemprop="articleBody"], .body-description')];
+  const candidates = bodies.length ? bodies : [...page.querySelectorAll("article, main, [role=main], section, div, body")];
+  const source = candidates.sort((a, b) => score(b) - score(a) || a.textContent.length - b.textContent.length)[0];
+  if (!title || !source || !source.querySelector("h2, h3, p, blockquote, li, pre") && !source.matches("p, blockquote, li, pre")) return null;
+  // Explicit body sections may be siblings, rather than one enclosing article.
+  const sources = bodies.length ? bodies.filter(body => body === source || body.parentElement === source.parentElement) : [source];
   const lines = [`## ${title}`, "", `[Original article](${url})`, ""];
-  source.querySelectorAll("h2, h3, p, blockquote, li").forEach((element) => {
+  sources.flatMap(source => source.matches("p, blockquote, li, pre") ? [source] : [...source.querySelectorAll("h2, h3, p, blockquote, li, pre")]).forEach((element) => {
+    if (element.parentElement.closest("p, blockquote, li, pre")) return;
     const text = element.textContent.replace(/\s+/g, " ").trim();
     if (!text || text === title) return;
     if (element.matches("h2, h3")) lines.push(`${element.tagName === "H2" ? "###" : "####"} ${text}`, "");
@@ -21,20 +33,23 @@ function markdownFromHtml(html, url, minimumArticleCharacters = 400) {
     else lines.push(text, "");
   });
   const markdown = lines.join("\n").trim();
-  return markdown.length < minimumArticleCharacters
-    ? { markdown: unsupportedMarkdown("Too little article text was available; this may be a preview or paywall."), unsupported: true }
+  const bodyCharacters = sources.reduce((total, source) => total + score(source), 0);
+  return bodyCharacters < minimumArticleCharacters
+    ? { markdown: unsupportedMarkdown("Incomplete extraction: too little substantive body text was identified. The cause of the missing text is unknown."), unsupported: true }
     : { markdown, unsupported: false };
 }
 
 function captureCurrentPage() {
-  const source = document.querySelector("main") || document.querySelector("article") || document.body;
+  const source = document.querySelector("main, [role=main]") || document.body;
   const text = source?.innerText.trim();
   if (!text) return { error: "No readable text was found on this page." };
   const escape = value => value.replace(/[\\`*_[\]<>]/g, "\\$&");
   const title = document.title.trim() || location.hostname;
   const capturedAt = new Date().toISOString();
   const anchors = [...source.querySelectorAll("a[href]")]
-    .filter(anchor => /^https?:/.test(anchor.href) && anchor.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+    .filter(anchor => /^https?:/.test(anchor.href) && anchor.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+      && !anchor.closest("nav, footer, aside, [role=navigation]")
+      && (!anchor.closest("header") || anchor.closest("article, main, [role=main], section")));
   const links = [...new Map(anchors.map(anchor => [anchor.href, `- [${escape(anchor.innerText.replace(/\s+/g, " ").trim() || anchor.href)}](<${anchor.href}>)`])).values()];
   return {
     title, url: location.href,
@@ -43,7 +58,8 @@ function captureCurrentPage() {
         const destination = new URL(url);
         return url !== location.href.split("#")[0]
           && !/\.(?:jpg|jpeg|png|gif|svg|webp|pdf|zip|mp4|mp3)$/i.test(destination.pathname)
-          && !/(?:^|\/)(?:unsubscribe|subscribe|login|signin|account|logout|signout)(?:\/|$)/i.test(destination.pathname)
+          && !/(?:^|\/)(?:unsubscribe|subscribe|login|signin|account|logout|signout|topic|category|tag|type)(?:\/|$)/i.test(destination.pathname)
+          && !/\/(?:magazine|archive)\/\d{4}\/(?:\w+\/?)?$/.test(destination.pathname)
           && !/[?&](?:unsubscribe|logout|signout)(?:=|&|$)/i.test(destination.search);
       }),
     filename: `page-${location.hostname.replace(/[^a-z0-9.-]/gi, "-")}-${capturedAt.replace(/[:.]/g, "-")}.md`,

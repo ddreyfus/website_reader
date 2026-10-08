@@ -356,7 +356,8 @@ test("Website Reader extension", async (t) => {
         assert.deepEqual(emailRequests, [previewArticle, unreadableEmailArticle]);
         assert.equal(state.articles[0].sourceUrl, resolvedArticle);
         assert.match(state.articles[0].markdown, /Distinct full-article evidence/);
-        assert.match(state.articles[1].markdown, /Too little article text/);
+        assert.match(state.articles[1].markdown, /Incomplete extraction/);
+        assert.doesNotMatch(state.articles[1].markdown, /preview or paywall/);
         assert.doesNotMatch(state.articles[1].markdown, /interactive article/);
         assert.match(state.articles[2].markdown, /Unavailable.*No article title or body/);
       } finally {

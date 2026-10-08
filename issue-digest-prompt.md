@@ -52,9 +52,13 @@ If the archive tools are unavailable, say the comparison could not be completed 
 
 ## Summaries
 
-Use the shortest summary that adequately captures the article. **Two sentences or fewer should be the default; do not use five sentences merely because five are allowed.**
+Begin with a tight **Summary** of the article. **Two sentences or fewer should be the default; do not use five sentences merely because five are allowed.**
 
-For every summary, identify the article's **question → conclusion → evidence that establishes it → important residual uncertainty**. Keep this sequence explicit but compact; if an element is absent, say so rather than supplying it from outside the article. For straightforward reporting, the “question” may be the event or development being reported, and the sequence may fit in one sentence.
+Keep the tight summary first. **When the source develops a substantial argument whose reasoning would be lost in that summary, add a separate, longer “Argument” account.** Explain the central thesis, the main premises and steps connecting them to the conclusion, the evidence or examples doing real work, consequential assumptions, and any important counterarguments the source addresses. Make the argument understandable without requiring the reader to reconstruct it from the short summary. Distinguish the author's reasoning from your assessment of its strengths and gaps.
+
+Use judgment: length, topic, or an opinion label alone does not warrant expansion. Add the longer account when the reasoning is substantive and its structure matters to understanding or evaluating the story; omit it for routine reporting, thin assertions, or repetition of the short summary. Use as much space as the argument warrants, usually one or a few focused paragraphs. The sentence limits for the tight summary do not apply to this separate account. Reconstruct only reasoning supported by the available source; do not invent missing premises or treat an email teaser as the full article's argument.
+
+For the tight summary, identify the article's **question → conclusion → evidence that establishes it → important residual uncertainty**. Keep this sequence explicit but compact; if an element is absent, say so rather than supplying it from outside the article. For straightforward reporting, the “question” may be the event or development being reported, and the sequence may fit in one sentence.
 
 - **News/reporting:** Usually one sentence. State what happened and, where important, why it matters. Use two sentences only when necessary.
 {{publicationSpecificNewsGuidance}}

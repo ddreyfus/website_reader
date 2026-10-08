@@ -1,6 +1,9 @@
 const collectButton = document.querySelector("#collect");
 const capturePageButton = document.querySelector("#capture-page");
 const pageCaptureStatus = document.querySelector("#page-capture-status");
+const pageCaptureProgress = document.querySelector("#page-capture-progress");
+let attachmentSourceUrl;
+let capturePageTabId;
 let currentPageTab;
 let capturingPage = false;
 capturePageButton.addEventListener("click", async () => {
@@ -8,6 +11,10 @@ capturePageButton.addEventListener("click", async () => {
   const source = currentPageTab;
   let message;
   capturingPage = true;
+  capturePageTabId = source?.id;
+  pageCaptureProgress.hidden = false;
+  pageCaptureProgress.removeAttribute("value");
+  pageCaptureStatus.textContent = "Discovering linked articles…";
   capturePageButton.disabled = true;
   attachmentFile.disabled = true;
   useBatchButton.disabled = true;
@@ -23,16 +30,22 @@ capturePageButton.addEventListener("click", async () => {
     const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: source.id }, func: captureCurrentPage });
     if (!result?.content) throw new Error(result?.error || "No readable text was found on this page.");
     if (result.url !== source.url) throw new Error("The page navigated during capture. Try again on the intended page.");
-    const collected = await chrome.runtime.sendMessage({ type: "capturePageArticles", articles: result.articles });
+    pageCaptureProgress.max = Math.max(1, result.articles.length);
+    pageCaptureProgress.value = 0;
+    const collected = await chrome.runtime.sendMessage({ type: "capturePageArticles", articles: result.articles, tabId: source.id });
     if (!collected?.ok) throw new Error(collected?.error || "Linked article collection failed.");
     result.content += collected.markdown;
     await download(result.content, result.filename, "text/markdown");
     const files = new DataTransfer();
     files.items.add(new File([result.content], result.filename, { type: "text/markdown" }));
     attachmentFile.files = files.files;
-    message = `Captured ${result.title}. Markdown download started and selected for Open in ChatGPT.`;
+    attachmentSourceUrl = result.url;
+    pageCaptureProgress.value = pageCaptureProgress.max;
+    copyButton.textContent = `Copy ${isGmailUrl(result.url) ? "email" : publicationName(result.url)} digest prompt`;
+    message = `Captured ${result.title}. Collected ${collected.collected} articles${collected.unavailable ? `; ${collected.unavailable} unavailable or incomplete` : ""}. Markdown download started and selected for Open in ChatGPT.`;
   } catch (error) {
     message = error.message || "The page could not be captured.";
+    pageCaptureProgress.hidden = true;
   } finally {
     capturingPage = false;
     capturePageButton.disabled = handoffRunning || !/^https?:/.test(currentPageTab?.url || "");
@@ -281,6 +294,7 @@ function publicationName(url) {
     if (hostname === "alumni.berkeley.edu") return "California Magazine";
     if (hostname === "cacm.acm.org") return "Communications of the ACM";
     if (hostname === "nytimes.com") return "The New York Times";
+    if (hostname === "spectrum.ieee.org") return "IEEE Spectrum";
     return hostname || "this publication";
   } catch {
     return "this publication";
@@ -441,18 +455,23 @@ async function digestPrompt(url) {
     : "- **Editorials, columns and opinion:** Up to five sentences. Clearly distinguish the article's claim from the evidence offered for it. Identify significant assumptions, missing evidence, acknowledged counterevidence, or material gaps between evidence and conclusion.";
   const response = await fetch(chrome.runtime.getURL(publication === "email" ? "email-digest-prompt.md" : "issue-digest-prompt.md"));
   if (!response.ok) throw new Error("The digest prompt could not be loaded.");
-  const prompt = (await response.text())
+  let prompt = (await response.text())
     .replaceAll("{{publication}}", publication === "The Economist" ? "Economist" : publication)
     .replace("{{publicationSpecificNewsGuidance}}", newsGuidance)
     .replace("{{publicationSpecificOpinionGuidance}}", opinionGuidance);
+  if (publication !== "email" && !isIssueUrl(url)) {
+    prompt = prompt.replace(/\bissue\b/g, "website article collection");
+    prompt += "\n\nThis batch comes from a website article listing, not a Gmail newsletter. Treat the listing as an index and the retrieved article bodies as the sources to analyze. Articles may share the same site or URL prefix; inventory each distinct article URL separately, deduplicate repeated links, and identify unavailable articles explicitly. Do not mistake the listing’s teasers for full article text.\n";
+  }
   return `${prompt.trim()}\n`;
 }
 
 copyButton.addEventListener("click", async () => {
   try {
     const tab = await readingBatchTab();
-    await navigator.clipboard.writeText(await digestPrompt(tab?.url || ""));
-    const publication = isGmailUrl(tab?.url) ? "email" : publicationName(tab?.url || "");
+    const url = attachmentSourceUrl || tab?.url || "";
+    await navigator.clipboard.writeText(await digestPrompt(url));
+    const publication = isGmailUrl(url) ? "email" : publicationName(url);
     setStatus(`Copied the ${publication} digest prompt. Upload the collected Markdown separately.`);
   } catch (error) { setStatus(error.message || "The digest prompt could not be copied."); }
 });
@@ -473,7 +492,7 @@ handoffButton.addEventListener("click", async () => {
     if (file && !/\.(?:md|markdown|txt)$/i.test(file.name)) throw new Error("Choose a Markdown or text file.");
     const content = file ? await file.text() : undefined;
     if (file && !content.trim()) throw new Error("The selected file is empty.");
-    if (!file) await navigator.clipboard.writeText(await digestPrompt(collectionState.sourceUrl));
+    if (!file || attachmentSourceUrl) await navigator.clipboard.writeText(await digestPrompt(file ? attachmentSourceUrl : collectionState.sourceUrl));
     setStatus(file ? `Opening ChatGPT with ${file.name}.` : "Opening ChatGPT with the collected file. The matching digest prompt is copied.");
     const result = await chrome.runtime.sendMessage({ type: "handoff", ...(file ? { content, filename: file.name } : {}) });
     if (!result?.ok) throw new Error(result?.error || "The ChatGPT handoff failed.");
@@ -493,11 +512,13 @@ downloadLogButton.addEventListener("click", async () => {
 });
 
 attachmentFile.addEventListener("change", async () => {
+  attachmentSourceUrl = undefined;
   const { collectionState } = await chrome.storage.local.get("collectionState");
   renderState(collectionState);
 });
 useBatchButton.addEventListener("click", async () => {
   attachmentFile.value = "";
+  attachmentSourceUrl = undefined;
   const { collectionState } = await chrome.storage.local.get("collectionState");
   renderState(collectionState);
 });
@@ -516,7 +537,8 @@ async function loadState() {
     const tab = await readingBatchTab();
     economistLanding = /^https:\/\/www\.economist\.com(?:\/|$)/.test(tab?.url || "") && !isIssueUrl(tab?.url);
     activeEditionUrl = isIssueUrl(tab?.url) ? editionUrl(tab.url) : "";
-    const publication = isGmailUrl(tab?.url) ? "email" : publicationName(tab?.url || "");
+    const promptUrl = attachmentSourceUrl || tab?.url;
+    const publication = isGmailUrl(promptUrl) ? "email" : publicationName(promptUrl || "");
     const gmail = isGmailUrl(tab?.url);
     const selectedId = emailSelect.value || collectionState?.emailId;
     emailLabel.hidden = !gmail;
@@ -544,6 +566,13 @@ async function loadState() {
     setStatus(`Could not load collection state: ${error.message || String(error)}`);
   }
 }
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (sender.id !== chrome.runtime.id || message.type !== "pageCaptureProgress" || !capturingPage || message.tabId !== capturePageTabId) return;
+  pageCaptureProgress.max = Math.max(1, message.total);
+  pageCaptureProgress.value = message.completed;
+  pageCaptureStatus.textContent = message.statusMessage;
+});
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes.collectionState) renderState(changes.collectionState.newValue);

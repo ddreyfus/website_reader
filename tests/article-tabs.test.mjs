@@ -15,6 +15,7 @@ test("Free Press redirects discard external sources before permissions or extrac
     const event = { addListener() {}, removeListener() {} };
     const chrome = {
       sidePanel: { async setPanelBehavior() {} },
+      action: { onClicked: event },
       runtime: { onMessage: { addListener(listener) { receive = listener; } }, onStartup: event },
       alarms: { onAlarm: event },
       storage: { local: { async get() { return { collectionState: state }; }, async set() {} } },
@@ -39,6 +40,7 @@ test("page messages cannot start background email collection", async () => {
   const event = { addListener() {} };
   const chrome = {
     sidePanel: { async setPanelBehavior() {} },
+    action: { onClicked: event },
     runtime: {
       getURL: path => `chrome-extension://reader/${path}`,
       onMessage: { addListener(listener) { receive = listener; } }, onStartup: event
@@ -139,7 +141,8 @@ test("newsletter articles use rendered tabs and pause for user access", async (t
     let [worker] = context.serviceWorkers();
     worker ||= await context.waitForEvent("serviceworker");
     const id = new URL(worker.url()).host;
-    assert.equal((await worker.evaluate(async () => await chrome.sidePanel.getPanelBehavior())).openPanelOnActionClick, true);
+    assert.equal((await worker.evaluate(async () => await chrome.sidePanel.getPanelBehavior())).openPanelOnActionClick, false);
+    assert.equal(await worker.evaluate(() => chrome.action.onClicked.hasListeners()), true);
     let articleLinks = [];
     await context.route("https://mail.google.com/**", route => route.fulfill({ contentType: "text/html", body: `<div role="main"><h2 class="hP">Newsletter</h2><div class="adn" data-legacy-message-id="selected"><span class="gD" email="sender@newsletter.test">Sender</span><div class="a3s"><p>Email commentary</p><a href="https://substack.com/profile/123-author">Author</a><a href="https://substack.com/app-link/post">LIKE</a><a href="https://substack.com/redirect/header"><img src="header.png"></a><a href="https://substack.com/redirect/app">View in App</a><a href="https://substack.com/redirect/podcast">Spotify</a><a href="https://maps.google.com/maps?q=address">Postal address</a><a href="https://www.google.com/maps/place/address">Address</a><a href="https://newsletter.test/jobs">Careers</a><footer><a href="https://newsletter.test/contact">Footer utility</a></footer>${articleLinks.map(url => `<a href="${url}">Story</a>`).join("")}<a href="https://medium.com/@phynixai">Author</a><a href="https://itunes.apple.com/app/medium/id828256236">Get the app</a></div></div></div>` }));
     const gmail = await context.newPage();
@@ -376,6 +379,7 @@ test("browser restart forgets stale article tab IDs without operating on tabs", 
   const event = { addListener() {} };
   const chrome = {
     sidePanel: { async setPanelBehavior() {} },
+    action: { onClicked: event },
     runtime: { onMessage: event, onStartup: { addListener(listener) { restart = listener; } } },
     tabs: { onRemoved: event, onUpdated: event },
     downloads: { onChanged: event },

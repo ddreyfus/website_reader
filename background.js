@@ -1,7 +1,15 @@
 importScripts("collection.js");
 
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(async error => {
+// Automatic panel opening bypasses the action click that grants tab capture access.
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(async error => {
   await appendLog(`Could not enable Website Reader panel: ${error.message || String(error)}`);
+});
+chrome.action.onClicked.addListener(async tab => {
+  try {
+    await chrome.sidePanel.open({ windowId: tab.windowId });
+  } catch (error) {
+    await appendLog(`Could not open Website Reader panel: ${error.message || String(error)}`);
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -53,7 +61,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       if (sender.url !== chrome.runtime.getURL("popup.html")) throw new Error("Use Website Reader's capture button.");
       const sections = [];
-      for (const url of message.articles) {
+      let collected = 0;
+      let unavailable = 0;
+      for (const [index, url] of message.articles.entries()) {
+        await chrome.runtime.sendMessage({ type: "pageCaptureProgress", tabId: message.tabId, completed: index, total: message.articles.length, statusMessage: `Collecting ${index + 1} of ${message.articles.length}: ${url}` }).catch(() => {});
         const destination = new URL(url);
         if (!/^https?:$/.test(destination.protocol) || destination.username || destination.password) continue;
         let tab;
@@ -66,14 +77,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readArticleTab });
           if (result.error || result.needsUser) throw new Error(result.error || "Article requires login or browser verification.");
           const [{ result: extraction }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: markdownFromHtml, args: [result.html, result.url] });
-          if (extraction) sections.push(extraction.markdown);
+          if (!extraction) throw new Error("No article title or body found.");
+          sections.push(extraction.markdown);
+          if (extraction.unsupported) unavailable += 1;
+          else collected += 1;
         } catch (error) {
+          unavailable += 1;
           sections.push(`## Unavailable linked page\n\nSource: <${url}>\n\n> **Unavailable:** ${error.message}`);
         } finally {
           if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
         }
       }
-      sendResponse({ ok: true, markdown: sections.length ? `\n---\n\n${sections.join("\n\n---\n\n")}\n` : "" });
+      sendResponse({ ok: true, collected, unavailable, markdown: sections.length ? `\n---\n\n${sections.join("\n\n---\n\n")}\n` : "" });
     })().catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
@@ -197,6 +212,9 @@ chrome.downloads.onChanged.addListener(async (delta) => {
 // ChatGPT's observed general file input is distinct from its photo inputs.
 // This is a UI integration, so fail visibly if the composer changes or requires login.
 async function attachBatch(content, filename) {
+  if (location.origin !== "https://chatgpt.com") {
+    return { ok: false, error: "Attachment interaction is allowed only on https://chatgpt.com." };
+  }
   function notice(text) {
     const element = document.createElement("div");
     element.setAttribute("role", "status");
@@ -293,13 +311,13 @@ async function readArticleTab() {
       clearTimeout(quiet);
       if (visible('input[type="password"], #challenge-form')
         || /\b404\b|page not found|just a moment/i.test(document.title)
-        || document.querySelector("h1") && document.querySelector("article, main")?.innerText.trim().length >= 400) quiet = setTimeout(done, 500);
+        || document.querySelector("h1") && [...document.querySelectorAll("article, main, [role=main], section, [itemprop=articleBody], .body-description")].some(element => element.innerText.trim().length >= 400)) quiet = setTimeout(done, 500);
     }
     observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
     check();
   });
   const heading = `${document.title} ${document.querySelector("h1")?.innerText || ""}`;
-  const text = (document.querySelector("article, main") || document.body).innerText;
+  const text = (document.querySelector("main, [role=main]") || document.body).innerText;
   const challenge = /verify (?:that )?you are human|unusual traffic|just a moment|attention required|access denied/i.test(heading)
     || visible('#challenge-form, form[action*="captcha" i], iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i]');
   const login = visible('input[type="password"]')
