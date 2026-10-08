@@ -9,9 +9,9 @@ test('collection controls distinguish current page, saved progress, and attachme
   const context = vm.createContext({
     attachmentFile: { files: [] }, attachmentStatus: control(), useBatchButton: control(),
     handoffButton: control(), collectButton: control(), continueButton: control(), skipButton: control(),
-    logOutput: control(), downloadLogButton: control(), handoffRunning: false, capturingPage: false,
+    logOutput: control(), downloadLogButton: control(), handoffRunning: false, capturingPage: false, attachmentSourceUrl: undefined,
     activeEditionUrl: 'https://www.economist.com/weeklyedition/2026-10-03', economistLanding: false,
-    emails: [], publicationName: () => 'The Economist', setStatus() {}
+    emails: [], publicationName: () => 'The Economist', setStatus(message) { context.lastStatus = message; }
   });
   vm.runInContext(code.slice(code.indexOf('function renderState('), code.indexOf('async function download(')), context);
   for (const status of [undefined, 'running', 'paused', 'completed']) {
@@ -23,13 +23,25 @@ test('collection controls distinguish current page, saved progress, and attachme
   context.attachmentFile.files = [{ name: 'economist.md' }];
   context.renderState({ status: 'paused' });
   assert.equal(context.handoffButton.disabled, false);
-  assert.match(context.attachmentStatus.textContent, /economist.md/);
+  assert.equal(context.attachmentStatus.textContent, 'File to open in ChatGPT: economist.md\nSource: chosen file.');
+  assert.equal(context.useBatchButton.textContent, 'Clear chosen file');
+  context.renderState({ status: 'completed', filename: 'medium.md' });
+  assert.equal(context.attachmentStatus.textContent, 'File to open in ChatGPT: economist.md\nSource: chosen file.');
+  assert.equal(context.useBatchButton.textContent, 'Use saved collection instead');
   context.handoffRunning = true;
   context.renderState({ status: 'completed', filename: 'medium.md' });
   assert.equal(context.handoffButton.disabled, true);
   assert.equal(context.attachmentFile.disabled, true);
   context.handoffRunning = false;
   context.attachmentFile.files = [];
+  context.lastStatus = 'Ready to collect the current issue.';
+  context.renderState({ status: 'completed', filename: 'medium.md', emailId: 'old-email', editionUrl: 'https://mail.google.com/::old-email', statusMessage: 'Old email completed.' });
+  assert.equal(context.attachmentStatus.textContent, 'File to open in ChatGPT: medium.md\nSource: latest completed collection.');
+  assert.equal(context.useBatchButton.hidden, true);
+  assert.equal(context.lastStatus, 'Ready to collect the current issue.');
+  context.renderState(undefined);
+  assert.equal(context.attachmentStatus.textContent, 'No file ready for ChatGPT. Choose a file or complete a collection.');
+  assert.equal(context.handoffButton.disabled, true);
   context.economistLanding = true;
   context.activeEditionUrl = '';
   context.renderState({ status: 'completed', filename: 'medium.md' });

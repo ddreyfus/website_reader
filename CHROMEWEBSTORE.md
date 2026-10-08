@@ -8,6 +8,8 @@ The toolbar opens the side panel through an explicit action click so Chrome gran
 
 The integration branch exposes Capture current page and Record scrolling feed directly on HTTP/HTTPS sites. Current-page capture discovers articles across the full listing, shows per-article progress, and saves loaded rendered text and linked article bodies together as Markdown and selects it for ChatGPT handoff, preserving the saved issue/email batch. Unsupported sites hide issue collection, and unrelated completed email status no longer replaces current-page guidance.
 
+UI cleanup: the ChatGPT action names the file it will attach and whether it is a chosen file or the latest completed collection. Refresh the panel screenshots before submission.
+
 Free Press digests collect only Free Press articles. External email links and externally redirected sources are excluded from article extraction.
 
 Newsletter filtering excludes Substack profiles, app actions, decorative links, and podcast utilities. Redirect destinations that are homepages, navigation, or media are discarded; linked pages never expand the email's article queue.
@@ -74,6 +76,7 @@ Local unpacked installation only. Publisher, public contact, support URL, distri
 |---|---|---|---|
 | 0.1.0 | 2026-10-08 | Direct page/feed controls on unlisted sites; current-page Markdown capture and accurate current-page status. | Local integration |
 | 0.1.0 | 2026-10-08 | Experimental feed recorder with tab video and timestamped raw DOM/event data. | Local experiment |
+| 0.1.0 | 2026-10-08 | Explicit next ChatGPT file and source; accurate file-clearing control and current-page status. | Local draft |
 | 0.1.0 | 2026-10-06 | Digest archive comparisons use a bounded NEW/ADDS/REPEAT familiarity test. | Local draft |
 | 0.1.0 | 2026-10-06 | Existing Markdown/text attachment selection, explicit paused-batch replacement, and Economist weekly-edition navigation. Refresh control screenshots. | Local draft |
 | 0.1.0 | 2026-10-05 | Recognize the current ChatGPT composer without relying on its former element ID. | Local draft |

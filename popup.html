@@ -30,11 +30,11 @@
         <button id="feed-recorder" type="button" disabled>Record scrolling feed</button>
         <progress id="page-capture-progress" aria-label="Linked article capture progress" hidden></progress>
         <p id="page-capture-status" role="status">Capture this page and its linked articles, or record the feed while you scroll.</p>
-        <label for="attachment-file">Choose an existing Markdown or text file</label>
+        <label for="attachment-file">Choose a Markdown or text file for ChatGPT</label>
         <input id="attachment-file" type="file" accept=".md,.markdown,.txt,text/markdown,text/plain">
         <button id="use-batch" type="button" hidden>Use saved collection instead</button>
-        <p id="attachment-status" aria-live="polite">No completed collection or file selected.</p>
-        <button id="handoff" type="button" disabled>Open in ChatGPT</button>
+        <p id="attachment-status" aria-live="polite">No file ready for ChatGPT. Choose a file or complete a collection.</p>
+        <button id="handoff" type="button" aria-describedby="attachment-status" disabled>Open in ChatGPT</button>
         <button id="copy" type="button">Copy digest prompt</button>
         <button id="download-log" type="button" disabled>Download latest log</button>
       </div>

@@ -22,8 +22,9 @@ video fixture uses a capture allowlist and does not validate the real toolbar
 permission flow. The live recording predates this written status and is evidence
 of capture, not parser correctness. Private recordings remain outside Git.
 
-UI cleanup should proceed on a separate branch from main, without bringing these
-experimental controls or extraction changes with it.
+Main’s finished UI cleanup and tunnel recovery fixes have been merged into this
+parked branch. This is the single retained experiment branch; its experimental
+controls and extraction changes have not been merged into main.
 
 The first task is to preserve evidence before attempting to identify posts. This branch adds recording only; it does not parse, summarize, or automatically scroll Facebook or LinkedIn.
 

@@ -134,6 +134,6 @@ pre {
 #archive-settings input:focus-visible, #archive-settings textarea:focus-visible { outline: 3px solid #efb954; outline-offset: 2px; }
 
 #attachment-file { max-width: 100%; }
-#attachment-status { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+#attachment-status { margin: 0; font-size: 13px; overflow-wrap: anywhere; white-space: pre-line; }
 
 #page-capture-progress { width: 100%; }
