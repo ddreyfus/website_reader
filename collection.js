@@ -39,7 +39,13 @@ function captureCurrentPage() {
   return {
     title, url: location.href,
     articles: [...new Set(anchors.map(anchor => { const url = new URL(anchor.href); url.hash = ""; return url.href; }))]
-      .filter(url => url !== location.href.split("#")[0] && !/\.(?:jpg|jpeg|png|gif|svg|webp|pdf|zip|mp4|mp3)$/i.test(new URL(url).pathname)),
+      .filter(url => {
+        const destination = new URL(url);
+        return url !== location.href.split("#")[0]
+          && !/\.(?:jpg|jpeg|png|gif|svg|webp|pdf|zip|mp4|mp3)$/i.test(destination.pathname)
+          && !/(?:^|\/)(?:unsubscribe|subscribe|login|signin|account|logout|signout)(?:\/|$)/i.test(destination.pathname)
+          && !/[?&](?:unsubscribe|logout|signout)(?:=|&|$)/i.test(destination.search);
+      }),
     filename: `page-${location.hostname.replace(/[^a-z0-9.-]/gi, "-")}-${capturedAt.replace(/[:.]/g, "-")}.md`,
     content: `# ${escape(title)}\n\nSource: <${location.href}>\n\nCaptured: ${capturedAt}\n\n> Snapshot of loaded, rendered page text. More content may appear after scrolling or expanding sections.\n\n${text}\n${links.length ? `\n## Page links\n\n${links.join("\n")}\n` : ""}`
   };
