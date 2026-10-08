@@ -1,11 +1,50 @@
 const collectButton = document.querySelector("#collect");
+const capturePageButton = document.querySelector("#capture-page");
+const pageCaptureStatus = document.querySelector("#page-capture-status");
+let currentPageTab;
+let capturingPage = false;
+capturePageButton.addEventListener("click", async () => {
+  if (capturingPage || handoffRunning) return;
+  const source = currentPageTab;
+  let message;
+  capturingPage = true;
+  capturePageButton.disabled = true;
+  attachmentFile.disabled = true;
+  useBatchButton.disabled = true;
+  handoffButton.disabled = true;
+  try {
+    if (!source?.id || !/^https?:/.test(source.url || "")) throw new Error("Open an HTTP or HTTPS page first.");
+    // Request access synchronously in the click handler, before any await.
+    const url = new URL(source.url);
+    const granted = await chrome.permissions.request({ origins: [`${url.protocol}//${url.hostname}/*`] });
+    if (!granted) throw new Error("Page access was declined.");
+    const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (active?.id !== source.id || active.url !== source.url) throw new Error("The current page changed. Select Capture current page again.");
+    const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: source.id }, func: captureCurrentPage });
+    if (!result?.content) throw new Error(result?.error || "No readable text was found on this page.");
+    if (result.url !== source.url) throw new Error("The page navigated during capture. Try again on the intended page.");
+    await download(result.content, result.filename, "text/markdown");
+    const files = new DataTransfer();
+    files.items.add(new File([result.content], result.filename, { type: "text/markdown" }));
+    attachmentFile.files = files.files;
+    message = `Captured ${result.title}. Markdown download started and selected for Open in ChatGPT.`;
+  } catch (error) {
+    message = error.message || "The page could not be captured.";
+  } finally {
+    capturingPage = false;
+    capturePageButton.disabled = handoffRunning || !/^https?:/.test(currentPageTab?.url || "");
+    const { collectionState } = await chrome.storage.local.get("collectionState");
+    renderState(collectionState, false);
+    pageCaptureStatus.textContent = message;
+  }
+});
 document.querySelector("#feed-recorder").addEventListener("click", async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id || !/^https?:/.test(tab.url || "")) throw new Error("Open an HTTP or HTTPS feed first.");
     await chrome.windows.create({ url: chrome.runtime.getURL(`feed-recorder.html?tabId=${tab.id}`), type: "popup", width: 540, height: 600 });
   } catch (error) {
-    document.querySelector("#feed-recorder-status").textContent = error.message;
+    pageCaptureStatus.textContent = error.message;
   }
 });
 const continueButton = document.querySelector("#continue");
@@ -263,9 +302,9 @@ function setStatus(message, linkUrl = "") {
 
 function renderState(state, showStatus = true) {
   const file = attachmentFile.files[0];
-  attachmentFile.disabled = handoffRunning;
-  useBatchButton.disabled = handoffRunning;
-  handoffButton.disabled = handoffRunning || (!file && state?.status !== "completed");
+  attachmentFile.disabled = handoffRunning || capturingPage;
+  useBatchButton.disabled = handoffRunning || capturingPage;
+  handoffButton.disabled = handoffRunning || capturingPage || (!file && state?.status !== "completed");
   attachmentStatus.textContent = file ? `ChatGPT attachment: ${file.name}`
     : state?.status === "completed" ? `ChatGPT attachment: ${state.filename}` : "No completed collection or file selected.";
   useBatchButton.hidden = !file;
@@ -275,6 +314,7 @@ function renderState(state, showStatus = true) {
   skipButton.hidden = !(resumable && Number.isInteger(state.articleTabId));
   skipButton.disabled = skipButton.hidden;
   collectButton.disabled = (!activeEditionUrl && !economistLanding) || state?.status === "running";
+  collectButton.hidden = !activeEditionUrl && !economistLanding && !emails.length;
   collectButton.textContent = economistLanding ? "Open Economist weekly edition"
     : resumable ? "Replace paused batch with current page"
     : emails.length ? "Collect email and articles" : `Collect ${publicationName(activeEditionUrl)} issue`;
@@ -285,7 +325,7 @@ function renderState(state, showStatus = true) {
     downloadLogButton.disabled = false;
   }
   if (!showStatus) return;
-  if ((sameEdition || state?.emailId) && state.statusMessage) setStatus(state.statusMessage, state.challengeUrl);
+  if (sameEdition && state.statusMessage) setStatus(state.statusMessage, state.challengeUrl);
   else if (active) setStatus(`A collection is ${state.status} for ${state.editionUrl}. ${resumable ? "Continue it or replace it with the current page." : "Wait for it to finish before starting another."}`, state.challengeUrl);
 }
 
@@ -414,7 +454,9 @@ copyButton.addEventListener("click", async () => {
 });
 
 handoffButton.addEventListener("click", async () => {
+  if (capturingPage) return;
   handoffRunning = true;
+  capturePageButton.disabled = true;
   handoffButton.disabled = true;
   attachmentFile.disabled = true;
   useBatchButton.disabled = true;
@@ -432,7 +474,7 @@ handoffButton.addEventListener("click", async () => {
     const result = await chrome.runtime.sendMessage({ type: "handoff", ...(file ? { content, filename: file.name } : {}) });
     if (!result?.ok) throw new Error(result?.error || "The ChatGPT handoff failed.");
   } catch (error) { setStatus(error.message || "The ChatGPT handoff failed."); }
-  finally { handoffRunning = false; const { collectionState } = await chrome.storage.local.get("collectionState"); renderState(collectionState, false); }
+  finally { handoffRunning = false; capturePageButton.disabled = !/^https?:/.test(currentPageTab?.url || ""); const { collectionState } = await chrome.storage.local.get("collectionState"); renderState(collectionState, false); }
 });
 
 downloadLogButton.addEventListener("click", async () => {
@@ -459,6 +501,14 @@ useBatchButton.addEventListener("click", async () => {
 async function loadState() {
   try {
     const { collectionState, latestLog = "" } = await chrome.storage.local.get(["collectionState", "latestLog"]);
+    const [current] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!capturingPage && (current?.id !== currentPageTab?.id || current?.url !== currentPageTab?.url)) {
+      pageCaptureStatus.textContent = "Capture loaded page text and links, or record the feed while you scroll.";
+    }
+    currentPageTab = current;
+    const readablePage = /^https?:/.test(currentPageTab?.url || "");
+    capturePageButton.disabled = !readablePage || capturingPage || handoffRunning;
+    document.querySelector("#feed-recorder").disabled = !readablePage;
     const tab = await readingBatchTab();
     economistLanding = /^https:\/\/www\.economist\.com(?:\/|$)/.test(tab?.url || "") && !isIssueUrl(tab?.url);
     activeEditionUrl = isIssueUrl(tab?.url) ? editionUrl(tab.url) : "";
@@ -479,7 +529,7 @@ async function loadState() {
     collectButton.textContent = gmail ? "Collect email and articles" : `Collect ${publication} issue`;
     collectButton.disabled = !activeEditionUrl;
     if (!activeEditionUrl && !gmail) {
-      setStatus(`Copy an issue digest prompt for ${publication}. To collect an issue, open its issue page on The Economist, California Magazine, Communications of the ACM, or The New York Times homepage.`);
+      setStatus(readablePage ? "Capture this page's loaded text and links, or record a scrolling feed." : "Open an HTTP or HTTPS page to capture its text or record a feed.");
     }
     if (latestLog) {
       logOutput.textContent = latestLog;

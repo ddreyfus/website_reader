@@ -9,7 +9,7 @@ test('collection controls distinguish current page, saved progress, and attachme
   const context = vm.createContext({
     attachmentFile: { files: [] }, attachmentStatus: control(), useBatchButton: control(),
     handoffButton: control(), collectButton: control(), continueButton: control(), skipButton: control(),
-    logOutput: control(), downloadLogButton: control(), handoffRunning: false,
+    logOutput: control(), downloadLogButton: control(), handoffRunning: false, capturingPage: false,
     activeEditionUrl: 'https://www.economist.com/weeklyedition/2026-10-03', economistLanding: false,
     emails: [], publicationName: () => 'The Economist', setStatus() {}
   });

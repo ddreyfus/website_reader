@@ -10,7 +10,11 @@ Website Reader is a Chrome/Chromium extension that collects an entire publicatio
 
 ## Capabilities
 
-The `codex/feed-capture-experiment` branch includes an opt-in [feed recording experiment](feed-capture-experiment.md) for investigating scrolling feeds before writing a post parser.
+The `codex/feed-capture-integration` branch combines the separately preserved
+`codex/feed-capture-experiment` and `codex/tunnel-recovery` branches. It includes
+current-page capture and an opt-in [feed recording experiment](feed-capture-experiment.md)
+for investigating scrolling feeds before writing a post parser. Reload the
+unpacked extension after switching branches so Chrome uses the checked-out code.
 
 - Finds article links on supported issue pages and removes duplicate links.
 - Fetches subscriber-accessible articles through the current signed-in browser session.
@@ -81,6 +85,30 @@ npm test
 ```
 
 The integration test loads the unpacked extension in a temporary Chromium profile and exercises the popup, active-tab detection, article discovery, ordered collection state, publication filenames, and copied Economist prompt. Publication pages and articles are supplied as deterministic browser fixtures, so the test does not crawl live issues.
+
+## Capture a current page or scrolling feed
+
+Open any HTTP/HTTPS page and open Website Reader from its toolbar icon. The panel
+shows **Capture current page** and **Record scrolling feed** directly, including
+on sites outside the publication issue list. Unsupported pages do not show a
+disabled issue-collection button. A completed email batch's status is shown only
+when viewing that batch; its saved attachment remains available separately.
+
+**Capture current page** requests access to that site, saves a Markdown snapshot
+of its loaded rendered text and HTTP/HTTPS links, and selects that file for
+**Open in ChatGPT**. It prefers the page's main content, then an article, then
+the body. This action preserves the saved publication/email batch. The snapshot
+includes currently loaded text, including content below the viewport; additional
+content can appear after scrolling or expanding sections. Links are listed in a
+separate section. Iframes, shadow roots, canvas/image text, and linked pages are
+outside this capture. The selected attachment stays in the panel until it closes;
+the downloaded Markdown remains available afterward.
+
+**Record scrolling feed** opens the experiment recorder in a separate window.
+Select **Start recording**, scroll normally, stop, and save both its WebM video
+and JSON event/page log. The recorder targets 30 fps and stops after two minutes;
+it records raw evidence for parser investigation, not a reconstructed feed digest.
+See the [recording instructions and limitations](feed-capture-experiment.md).
 
 ## Collect an issue
 

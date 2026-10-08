@@ -6,7 +6,7 @@ The first task is to preserve evidence before attempting to identify posts. This
 
 1. Reload Website Reader at `chrome://extensions` after switching to this branch. The experiment adds `activeTab` and `tabCapture` permissions.
 2. Open the signed-in feed and click Website Reader's toolbar icon on that tab. This invocation grants the temporary tab-capture access.
-3. Expand **Feed capture experiment** in the panel and select **Open feed recorder**.
+3. Select **Record scrolling feed** in the panel. This integration branch exposes it directly beside **Capture current page**.
 4. Select **Start recording** in the separate window. Grant access to the source site if Chrome asks. Return to the source tab, scroll slowly, pause on posts, and try **See more**.
 5. Select **Stop recording** in the recorder. Save both the video and page/event log before closing that window. Downloads are explicit, separate links.
 

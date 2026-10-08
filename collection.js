@@ -1,3 +1,20 @@
+function captureCurrentPage() {
+  const source = document.querySelector("main") || document.querySelector("article") || document.body;
+  const text = source?.innerText.trim();
+  if (!text) return { error: "No readable text was found on this page." };
+  const escape = value => value.replace(/[\\`*_[\]<>]/g, "\\$&");
+  const title = document.title.trim() || location.hostname;
+  const capturedAt = new Date().toISOString();
+  const links = [...new Map([...source.querySelectorAll("a[href]")]
+    .filter(anchor => /^https?:/.test(anchor.href) && anchor.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
+    .map(anchor => [anchor.href, `- [${escape(anchor.innerText.replace(/\s+/g, " ").trim() || anchor.href)}](<${anchor.href}>)`])).values()];
+  return {
+    title, url: location.href,
+    filename: `page-${location.hostname.replace(/[^a-z0-9.-]/gi, "-")}-${capturedAt.replace(/[:.]/g, "-")}.md`,
+    content: `# ${escape(title)}\n\nSource: <${location.href}>\n\nCaptured: ${capturedAt}\n\n> Snapshot of loaded, rendered page text. More content may appear after scrolling or expanding sections.\n\n${text}\n${links.length ? `\n## Page links\n\n${links.join("\n")}\n` : ""}`
+  };
+}
+
 async function collectEdition(resume, tabId, email = null) {
   if (globalThis.__websiteReaderRunning) return { error: "Collection is already running in this tab." };
   globalThis.__websiteReaderRunning = true;
@@ -252,4 +269,3 @@ async function collectEdition(resume, tabId, email = null) {
     globalThis.__websiteReaderRunning = false;
   }
 }
-
