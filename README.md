@@ -39,12 +39,31 @@ Website Reader supports all issue pages under:
 4. Choose this `website_reader` directory.
 5. After pulling or editing the extension files, use **Reload** on the extension card before testing the changes.
 
-## Test
+## Local archive service
 
 The local MCP hello-world experiment has separate
 [tunnel setup and troubleshooting instructions](local-mcp-setup.md), including
 `npm run mcp:start`, `npm run mcp:stop`, and `npm run mcp:status`. Its archive design
 is recorded in [the local reading archive plan](local-reading-archive-plan.md).
+
+For persistent archive access on macOS, configure the tunnel profile and private
+runtime key using those instructions, then run `npm run mcp:install` once. This
+installs a user LaunchAgent that starts the tunnel at login and restarts it after
+process exits, with a ten-second restart throttle. `npm run mcp:status` reports
+the supervised process state plus separate health and readiness checks.
+`npm run mcp:stop` deliberately unloads the tunnel until `npm run mcp:start` or
+the next login. Bleve is supervised separately using `npm run bleve:install`;
+a healthy Bleve endpoint alone does not prove that ChatGPT can reach the archive.
+
+The tunnel client retries network interruptions while running. Sleep, logout,
+lost internet, expired/revoked credentials, and upstream service errors can still
+make archive tools unavailable. The LaunchAgent cannot keep a sleeping/offline
+Mac reachable or repair credentials. A fresh Website Reader Local `hello` and
+archive search verify the complete connection after recovery. Detailed client
+logs are in `~/Library/Application Support/tunnel-client/logs/website-reader-archive.log`;
+LaunchAgent output is in `.local-mcp/tunnel.log`.
+
+## Test
 
 Install the test dependency and Chromium once:
 
