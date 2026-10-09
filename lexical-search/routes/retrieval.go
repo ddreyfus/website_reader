@@ -2,6 +2,7 @@ package routes
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/search"
 	blevequery "github.com/blevesearch/bleve/v2/search/query"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
@@ -175,6 +177,8 @@ func searchArchive(c *gin.Context) {
 	results := []gin.H{}
 	var totalMatches uint64
 	var searchError string
+	semanticStatus := "disabled"
+	var semanticCoverage uint64
 	fail := func(c *gin.Context, err error, status int) {
 		searchError = err.Error()
 		ErrorHandler(c, err, status)
@@ -184,7 +188,11 @@ func searchArchive(c *gin.Context) {
 		for _, result := range results {
 			hits = append(hits, gin.H{"document_id": result["document_id"], "chunk_id": result["chunk_id"], "score": result["score"]})
 		}
-		entry := gin.H{"event": "archive_search", "timestamp": started.UTC().Format(time.RFC3339Nano), "query": query, "corpus_ids": corpusIDs, "limit": limit, "total_matches": totalMatches, "returned_count": len(results), "results": hits, "duration_ms": float64(time.Since(started).Microseconds()) / 1000, "status": c.Writer.Status()}
+		entry := gin.H{"event": "archive_search", "timestamp": started.UTC().Format(time.RFC3339Nano), "query": query, "corpus_ids": corpusIDs, "limit": limit, "total_matches": totalMatches, "returned_count": len(results), "results": hits, "duration_ms": float64(time.Since(started).Microseconds()) / 1000, "status": c.Writer.Status(), "semantic_status": semanticStatus, "semantic_indexed_passages": semanticCoverage}
+		if semanticCoverage > 0 {
+			entry["lexical_total_matches"] = totalMatches
+			entry["total_matches"] = nil // Top-K vector retrieval has no exhaustive match count.
+		}
 		if searchError != "" {
 			entry["error"] = searchError
 		}
@@ -221,6 +229,22 @@ func searchArchive(c *gin.Context) {
 			return
 		}
 	}
+	// Inference overlaps lexical retrieval; a slow runtime cannot add seconds.
+	embeddingCtx, cancelEmbedding := context.WithTimeout(c.Request.Context(), 250*time.Millisecond)
+	embeddingDone := make(chan struct{})
+	var vector []float32
+	var model string
+	var embeddingErr error
+	go func() {
+		defer close(embeddingDone)
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				embeddingErr = fmt.Errorf("embedding query panic: %v", recovered)
+			}
+		}()
+		vector, model, embeddingErr = prepareEmbeddingQuery(embeddingCtx, query)
+	}()
+	defer func() { cancelEmbedding(); <-embeddingDone }()
 	workspaces, unlock, err := lockArchiveWorkspaces()
 	if err != nil {
 		fail(c, err, 500)
@@ -279,11 +303,64 @@ func searchArchive(c *gin.Context) {
 		request := bleve.NewSearchRequestOptions(query, limit, 0, false)
 		request.Fields = []string{"path", "text", "lineStart", "lineEnd"}
 		request.SortBy([]string{"-_score", "_id"})
-		hits, err := alias.Search(request)
-		if err != nil {
-			fail(c, err, 500)
-			return
+		if os.Getenv("ARCHIVE_EMBEDDINGS") == "1" {
+			request.Size = max(3*limit, 60)
 		}
+		lexicalDone := make(chan struct{})
+		var lexical *bleve.SearchResult
+		var lexicalErr error
+		// request is immutable while lexical search runs; vector search gets a copy.
+		go func() {
+			defer close(lexicalDone)
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					lexicalErr = fmt.Errorf("lexical query panic: %v", recovered)
+				}
+			}()
+			lexical, lexicalErr = alias.SearchInContext(c.Request.Context(), request)
+		}()
+		defer func() { <-lexicalDone }()
+
+		if os.Getenv("ARCHIVE_EMBEDDINGS") == "1" {
+			select {
+			case <-embeddingDone:
+				if embeddingErr != nil {
+					semanticStatus = "unavailable"
+					log.Printf("semantic_query error=%v", embeddingErr)
+				} else if len(vector) > 0 {
+					semanticStatus = "partial"
+				}
+			case <-embeddingCtx.Done():
+				// Do not read inference output until its completion channel is closed.
+				semanticStatus = "unavailable"
+			}
+		}
+		var semantic *bleve.SearchResult
+		if semanticStatus == "partial" && embeddingCtx.Err() != nil {
+			semanticStatus = "unavailable"
+		}
+		if semanticStatus == "partial" {
+			vectorRequest := *request
+			vectorRequest.Size = limit
+			semantic, semanticCoverage, err = searchEmbeddingCandidates(embeddingCtx, alias, &vectorRequest, ids, vector, model)
+			if err != nil {
+				semanticStatus = "unavailable"
+				semanticCoverage = 0
+				log.Printf("semantic_search error=%v", err)
+			} else if semanticCoverage == uint64(len(ids)) {
+				semanticStatus = "ready"
+			}
+		}
+		<-lexicalDone
+		if lexicalErr != nil {
+			log.Printf("lexical_search error=%v", lexicalErr)
+			if semantic == nil {
+				fail(c, lexicalErr, 500)
+				return
+			}
+			lexical = nil
+		}
+		hits := mergeSearchResults(lexical, semantic, limit)
 		totalMatches = hits.Total
 		for _, hit := range hits.Hits {
 			workspace := owners[hit.ID]
@@ -297,7 +374,7 @@ func searchArchive(c *gin.Context) {
 			results = append(results, gin.H{"document_id": id, "chunk_id": hit.ID, "corpus_id": archiveID(workspace, filepath.Dir(path)), "title": filepath.Base(path), "path": path, "line_start": line, "line_end": endLine, "text": hit.Fields["text"], "score": hit.Score, "url": fmt.Sprintf("/file/%s?chunk_id=%s", id, hit.ID)})
 		}
 	}
-	c.JSON(200, gin.H{"results": results})
+	c.JSON(200, gin.H{"results": results, "semantic_status": semanticStatus, "semantic_indexed_passages": semanticCoverage})
 }
 
 func readDocument(c *gin.Context) {
@@ -523,3 +600,39 @@ func readDocument(c *gin.Context) {
 }
 
 var documentPage = template.Must(template.New("document").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.title}}</title><style>body{max-width:70rem;margin:2rem auto;padding:0 1rem;font:1rem/1.6 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere}nav{display:flex;gap:2rem}</style><h1>{{.title}}</h1><p>Byte {{.offset}} of {{.total_bytes}}. Text is shown as recorded.</p><nav aria-label="Document passages">{{if .has_previous}}<a href="?offset={{.previous_offset}}">Previous passage</a>{{end}}{{if .truncated}}<a href="?offset={{.next_offset}}">Next passage</a>{{end}}</nav><pre>{{.text}}</pre></html>`))
+
+func mergeSearchResults(lexical, semantic *bleve.SearchResult, limit int) *bleve.SearchResult {
+	if lexical == nil {
+		lexical = &bleve.SearchResult{}
+	}
+	if semantic == nil {
+		if len(lexical.Hits) > limit {
+			lexical.Hits = lexical.Hits[:limit]
+		}
+		return lexical
+	}
+	scores := map[string]float64{}
+	hits := map[string]*search.DocumentMatch{}
+	for _, result := range []*bleve.SearchResult{lexical, semantic} {
+		for rank, hit := range result.Hits {
+			scores[hit.ID] += 1 / float64(60+rank+1)
+			hits[hit.ID] = hit
+		}
+	}
+	lexical.Hits = nil
+	for id, hit := range hits {
+		hit.Score = scores[id]
+		lexical.Hits = append(lexical.Hits, hit)
+	}
+	sort.Slice(lexical.Hits, func(i, j int) bool {
+		a, b := lexical.Hits[i], lexical.Hits[j]
+		if a.Score == b.Score {
+			return strings.Compare(a.ID, b.ID) < 0
+		}
+		return a.Score > b.Score
+	})
+	if len(lexical.Hits) > limit {
+		lexical.Hits = lexical.Hits[:limit]
+	}
+	return lexical
+}

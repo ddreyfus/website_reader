@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "semantic:deps": "python3 scripts/semantic-search.py install",
+    "semantic:build": "python3 scripts/semantic-search.py build",
+    "semantic:test": "python3 -B -m unittest discover -s tests -p 'test_semantic_*.py' && python3 scripts/semantic-search.py test",
+    "semantic:serve": "python3 scripts/semantic-search.py serve",
+    "semantic:install": "python3 scripts/install-launchagent.py ollama",
+    "semantic:enable": "python3 scripts/install-launchagent.py bleve --semantic",
+    "semantic:pull": "python3 scripts/semantic-search.py pull",
     "test": "node --test tests/*.test.mjs",
     "test:extension": "node --test tests/*.test.mjs",
     "mcp:serve": "node scripts/mcp-archive.mjs",

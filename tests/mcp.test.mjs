@@ -46,7 +46,7 @@ test("archive MCP discovers corpora, forwards scopes, reads context, and reports
     } else if (request.url.startsWith("/api/v1/documents/doc/articles?")) {
       response.end(JSON.stringify({ articles: [{ title: "Article", kind: "article", line_start: 7, url: "/file/doc?line=7" }], total: 1, next_offset: null }));
     } else if (request.url === "/api/v1/archive/search") {
-      response.end(JSON.stringify({ results: [{ document_id: "doc", text: "matching passage", url: "/file/doc?line=7" }] }));
+      response.end(JSON.stringify({ results: [{ document_id: "doc", text: "matching passage", url: "/file/doc?line=7" }], semantic_status: "partial", semantic_indexed_passages: 12 }));
     } else if (request.url.startsWith("/api/v1/documents/doc?")) {
       response.end(JSON.stringify({ text: "bounded context", truncated: true, next_offset: 256, url: "/file/doc" }));
     } else {
@@ -83,6 +83,8 @@ test("archive MCP discovers corpora, forwards scopes, reads context, and reports
     const search = await call("search_archive", { query: "repeated idea", corpus_ids: ["child"], limit: 2 });
     assert.deepEqual(requests.at(-1).body, { query: "repeated idea", corpus_ids: ["child"], limit: 2 });
     assert.equal(search.results[0].url, `http://127.0.0.1:${backend.address().port}/file/doc?line=7`);
+    assert.equal(search.semantic_status, "partial");
+    assert.equal(search.semantic_indexed_passages, 12);
     assert.equal((await call("read_document", { document_id: "doc", line: 7, limit: 256 })).next_offset, 256);
     assert.match(requests.at(-1).url, /line=7/);
     await call("read_document", { document_id: "doc", offset: 256, limit: 256 });

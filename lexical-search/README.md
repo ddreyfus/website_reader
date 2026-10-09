@@ -1,5 +1,9 @@
 # Local Bleve search service
 
+Optional local semantic search uses Bleve vectors/FAISS and Ollama EmbeddingGemma.
+See [build, installation, operation, and progress](../SEMANTIC_SEARCH.md) for the
+pinned native setup and opt-in hybrid search. Ordinary builds remain lexical.
+
 This directory contains the service itself. No python-programmer checkout is
 needed. Requirements: Go 1.21.3 or newer and Git on PATH.
 
@@ -120,9 +124,10 @@ GOFLAGS="-ldflags=-linkmode=external" npm run test:bleve
 
 Queries and indexed content use the same lowercase character trigrams (three-character n-grams). A passage qualifies when any query trigram matches (OR). Results sort by Bleve relevance score; more matching trigrams contribute to the score, alongside term rarity, frequency and passage length. Corpus scope is enforced independently. Partial-word matches are intentional; very short queries with fewer than three characters produce no trigrams. Existing indexes need no rebuild for this query change.
 
-This is lexical retrieval using the existing trigram analyzer and overlapping
+The default build uses lexical retrieval with the existing trigram analyzer and overlapping
 chunks bounded by 32 lines or 4096 bytes, with up to 256 bytes of overlap. It is not semantic chunking or vector
-search. Long paragraphs are split rather than skipped; chunk limits are in `config/config.go`.
+search. The optional vector build adds semantic retrieval over these same chunks.
+Long paragraphs are split rather than skipped; chunk limits are in `config/config.go`.
 Git snapshots contain indexed source history; deleting indexes also deletes
 those snapshots. Protect the archive as you would the source documents.
 
@@ -221,3 +226,15 @@ go test -ldflags=-linkmode=external ./routes -run TestTikaSampleRetrieval -v
 
 The integration test copies sources and creates an isolated archive; it does not
 write to the original files or the live index.
+
+### Optional supervised semantic runtime
+
+After `npm run semantic:deps` and `npm run semantic:build`, use
+`npm run semantic:install` to supervise local Ollama. `npm run bleve:install`
+keeps semantic indexing disabled; `npm run semantic:enable` explicitly persists
+opt-in and starts backfill. Search and Ollama restart automatically through
+LaunchAgents. Query inference runs alongside lexical retrieval, with a 250 ms
+semantic deadline and lexical fallback during runtime startup or failure.
+Native vector calls observe cancellation cooperatively; the deadline cannot
+forcibly interrupt arbitrary C code. Use the semantic build/test scripts to apply
+the pinned FAISS selector fix. See [SEMANTIC_SEARCH.md](../SEMANTIC_SEARCH.md).

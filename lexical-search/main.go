@@ -72,11 +72,16 @@ func main() {
 		log.Fatal(err)
 	}
 	indexingDone := make(chan struct{})
+	embeddingsDone := make(chan struct{})
+	go func() {
+		defer close(embeddingsDone)
+		routes.WatchEmbeddings(ctx)
+	}()
 	go func() {
 		defer close(indexingDone)
 		routes.WatchDirectories(ctx, config.IndexDirectories, 10*time.Second)
 	}()
-	defer func() { stop(); <-indexingDone }()
+	defer func() { stop(); <-indexingDone; <-embeddingsDone }()
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
