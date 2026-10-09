@@ -21,7 +21,7 @@ Website Reader is a Chrome/Chromium extension that collects an entire publicatio
 - Resumes a paused collection from its saved position after the problem is resolved.
 - Downloads and displays the latest detailed collection log.
 - Tracks completed and interrupted extension downloads; it cleans up partial files and removes failed downloads from Chrome's history when possible.
-- Copies the bundled issue digest prompt, targeted to the publication in the active tab and ready to paste into an AI chat after manually uploading the issue.
+- Copies the bundled issue digest prompt, targeted to the saved collection’s source (or the active tab before collection) and ready to paste into an AI chat after manually uploading the issue.
 
 Website Reader supports all issue pages under:
 
@@ -127,7 +127,7 @@ After collection finishes:
 2. Select **Copy digest prompt** in Website Reader.
 3. Paste the prompt into the chat and submit it with the uploaded Markdown.
 
-The Copy button places only the instructions from [`issue-digest-prompt.md`](issue-digest-prompt.md) on the clipboard; it does not copy the issue or create another file. Its publication name follows the active site. Economist-specific instructions for The World This Week and Leaders are retained; other publications receive equivalent generic guidance. The prompt asks the AI to process the uploaded issue sequentially, summarize each article using only that article as evidence, distinguish claims from evidence, and identify articles worth closer reading.
+The Copy button places only the instructions from [`issue-digest-prompt.md`](issue-digest-prompt.md) on the clipboard; it does not copy the issue or create another file. Its publication name follows the saved collection’s source, falling back to the active site when no collection exists. Copying is disabled for a manually chosen file because it has no publication metadata. Economist-specific instructions for The World This Week and Leaders are retained; other publications receive equivalent generic guidance. The prompt asks the AI to process the uploaded issue sequentially, summarize each article using only that article as evidence, distinguish claims from evidence, and identify articles worth closer reading.
 
 ## View or download the log
 

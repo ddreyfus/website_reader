@@ -92,6 +92,7 @@ const emailSelect = document.querySelector("#email-message");
 const emailLabel = document.querySelector("#email-label");
 let emails = [];
 let activeEditionUrl = "";
+let activeSourceUrl = "";
 
 document.querySelector("#close").addEventListener("click", async () => {
   try {
@@ -254,6 +255,10 @@ function setStatus(message, linkUrl = "") {
 
 function renderState(state, showStatus = true) {
   const file = attachmentFile.files[0];
+  const promptUrl = state?.sourceUrl || activeSourceUrl;
+  const publication = isGmailUrl(promptUrl) ? "email" : publicationName(promptUrl);
+  copyButton.textContent = file ? "Digest prompt unavailable for chosen file" : `Copy ${publication} digest prompt`;
+  copyButton.disabled = Boolean(file);
   attachmentFile.disabled = handoffRunning;
   useBatchButton.disabled = handoffRunning;
   handoffButton.disabled = handoffRunning || (!file && state?.status !== "completed");
@@ -399,9 +404,11 @@ async function digestPrompt(url) {
 
 copyButton.addEventListener("click", async () => {
   try {
-    const tab = await readingBatchTab();
-    await navigator.clipboard.writeText(await digestPrompt(tab?.url || ""));
-    const publication = isGmailUrl(tab?.url) ? "email" : publicationName(tab?.url || "");
+    if (attachmentFile.files[0]) throw new Error("The chosen file has no publication metadata. Use the saved collection to copy its digest prompt.");
+    const { collectionState } = await chrome.storage.local.get("collectionState");
+    const url = collectionState?.sourceUrl || activeSourceUrl;
+    await navigator.clipboard.writeText(await digestPrompt(url));
+    const publication = isGmailUrl(url) ? "email" : publicationName(url);
     setStatus(`Copied the ${publication} digest prompt. Upload the collected Markdown separately.`);
   } catch (error) { setStatus(error.message || "The digest prompt could not be copied."); }
 });
@@ -453,6 +460,7 @@ async function loadState() {
   try {
     const { collectionState, latestLog = "" } = await chrome.storage.local.get(["collectionState", "latestLog"]);
     const tab = await readingBatchTab();
+    activeSourceUrl = tab?.url || "";
     economistLanding = /^https:\/\/www\.economist\.com(?:\/|$)/.test(tab?.url || "") && !isIssueUrl(tab?.url);
     activeEditionUrl = isIssueUrl(tab?.url) ? editionUrl(tab.url) : "";
     const publication = isGmailUrl(tab?.url) ? "email" : publicationName(tab?.url || "");
@@ -468,7 +476,6 @@ async function loadState() {
       activeEditionUrl = emails.find((email) => email.id === emailSelect.value)?.editionUrl || "";
       setStatus(emails.length ? activeEditionUrl ? "Ready to collect the email and its linked articles." : "Select one expanded email." : "Open an email in Gmail and expand its message body, then reopen Website Reader.");
     }
-    copyButton.textContent = `Copy ${publication} digest prompt`;
     collectButton.textContent = gmail ? "Collect email and articles" : `Collect ${publication} issue`;
     collectButton.disabled = !activeEditionUrl;
     if (!activeEditionUrl && !gmail) {

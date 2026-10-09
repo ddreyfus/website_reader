@@ -8,8 +8,9 @@ test('collection controls distinguish current page, saved progress, and attachme
   const control = () => ({ disabled: false, hidden: false, textContent: '' });
   const context = vm.createContext({
     attachmentFile: { files: [] }, attachmentStatus: control(), useBatchButton: control(),
-    handoffButton: control(), collectButton: control(), continueButton: control(), skipButton: control(),
+    copyButton: control(), handoffButton: control(), collectButton: control(), continueButton: control(), skipButton: control(),
     logOutput: control(), downloadLogButton: control(), handoffRunning: false,
+    activeSourceUrl: 'https://www.economist.com/', isGmailUrl: url => url.startsWith('https://mail.google.com/'),
     activeEditionUrl: 'https://www.economist.com/weeklyedition/2026-10-03', economistLanding: false,
     emails: [], publicationName: () => 'The Economist', setStatus(message) { context.lastStatus = message; }
   });
@@ -25,6 +26,7 @@ test('collection controls distinguish current page, saved progress, and attachme
   assert.equal(context.handoffButton.disabled, false);
   assert.equal(context.attachmentStatus.textContent, 'File to open in ChatGPT: economist.md\nSource: chosen file.');
   assert.equal(context.useBatchButton.textContent, 'Clear chosen file');
+  assert.equal(context.copyButton.disabled, true);
   context.renderState({ status: 'completed', filename: 'medium.md' });
   assert.equal(context.attachmentStatus.textContent, 'File to open in ChatGPT: economist.md\nSource: chosen file.');
   assert.equal(context.useBatchButton.textContent, 'Use saved collection instead');
@@ -38,6 +40,9 @@ test('collection controls distinguish current page, saved progress, and attachme
   context.renderState({ status: 'completed', filename: 'medium.md', emailId: 'old-email', editionUrl: 'https://mail.google.com/::old-email', statusMessage: 'Old email completed.' });
   assert.equal(context.attachmentStatus.textContent, 'File to open in ChatGPT: medium.md\nSource: latest completed collection.');
   assert.equal(context.useBatchButton.hidden, true);
+  assert.equal(context.copyButton.disabled, false);
+  context.renderState({ status: 'completed', sourceUrl: 'https://mail.google.com/', filename: 'medium.md' });
+  assert.equal(context.copyButton.textContent, 'Copy email digest prompt');
   assert.equal(context.lastStatus, 'Ready to collect the current issue.');
   context.renderState(undefined);
   assert.equal(context.attachmentStatus.textContent, 'No file ready for ChatGPT. Choose a file or complete a collection.');

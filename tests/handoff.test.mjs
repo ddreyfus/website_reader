@@ -65,6 +65,12 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
         await popup.goto(`chrome-extension://${extensionId}/popup.html`);
         await popup.getByRole("button", { name: "Open in ChatGPT" }).waitFor();
         await popup.waitForFunction(() => document.querySelector("#attachment-status").textContent === "File to open in ChatGPT: reading-batch.md\nSource: latest completed collection.");
+        await popup.getByRole("button", { name: `Copy ${publication === "email" ? "email" : "The Economist"} digest prompt`, exact: true }).click();
+        await popup.getByText(`Copied the ${publication === "email" ? "email" : "The Economist"} digest prompt.`, { exact: false }).waitFor();
+        await context.grantPermissions(["clipboard-read"], { origin: "https://unrelated.test" });
+        await unrelated.bringToFront();
+        assert.match(await unrelated.evaluate(async () => await navigator.clipboard.readText()), promptPattern);
+        await popup.bringToFront();
         await popup.evaluate(() => { chrome.permissions.request = async () => true; });
         const chat = await context.newPage();
         await chat.goto("https://chatgpt.com/");
@@ -114,6 +120,7 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
       const content = "# Chosen issue\n\nExact file text — café.\n";
       await popup.locator("#attachment-file").setInputFiles({ name: "chosen.md", mimeType: "text/markdown", buffer: Buffer.from(content) });
       assert.equal(await popup.locator("#attachment-status").textContent(), "File to open in ChatGPT: chosen.md\nSource: chosen file.");
+      assert.equal(await popup.locator("#copy").isDisabled(), true);
       const chat = await context.newPage();
       await chat.goto("https://chatgpt.com/");
       await popup.bringToFront();
