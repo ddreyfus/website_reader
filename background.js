@@ -1,10 +1,11 @@
-importScripts("collection.js");
+importScripts("collection.js", "chatgpt-backup.js");
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(async error => {
   await appendLog(`Could not enable Website Reader panel: ${error.message || String(error)}`);
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "chatGPTBackup") return handleChatGPTBackup(message, sender, sendResponse);
   if (message.type === "handoff") {
     (async () => {
       if (sender.url !== chrome.runtime.getURL("popup.html")) throw new Error("Use Website Reader's ChatGPT button.");
@@ -78,6 +79,7 @@ async function appendLog(message) {
 
 chrome.runtime.onStartup.addListener(async () => {
   try {
+    if ((await chrome.storage.local.get("chatGPTBackupEnabled")).chatGPTBackupEnabled) await chrome.alarms.create("chatgpt-backup", { periodInMinutes: 0.5 });
     const { collectionState: state } = await chrome.storage.local.get("collectionState");
     if (!state) return;
     await chrome.alarms.clear("email-collection");

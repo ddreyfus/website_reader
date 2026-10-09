@@ -129,7 +129,7 @@ test("newsletter articles use rendered tabs and pause for user access", async (t
   const extensionPath = path.join(profile, "extension");
   await fs.mkdir(extensionPath);
   const source = path.resolve(import.meta.dirname, "..");
-  for (const name of ["collection.js", "manifest.json", "popup.html", "popup.css", "popup.js", "background.js", "issue-digest-prompt.md", "email-digest-prompt.md"]) await fs.copyFile(path.join(source, name), path.join(extensionPath, name));
+  for (const name of ["collection.js", "chatgpt-backup.js", "manifest.json", "popup.html", "popup.css", "popup.js", "background.js", "issue-digest-prompt.md", "email-digest-prompt.md"]) await fs.copyFile(path.join(source, name), path.join(extensionPath, name));
   const manifest = JSON.parse(await fs.readFile(path.join(extensionPath, "manifest.json")));
   manifest.host_permissions.push("http://127.0.0.1/*", "http://localhost/*");
   await fs.writeFile(path.join(extensionPath, "manifest.json"), JSON.stringify(manifest));

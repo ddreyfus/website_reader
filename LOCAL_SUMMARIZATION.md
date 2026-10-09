@@ -47,3 +47,17 @@ Use complete article text where it fits. For longer documents, explicitly accoun
 - Bound summarization concurrency and request duration, report failures clearly, and verify that concurrent summarization leaves search usable.
 
 This note does not enable semantic indexing, install models, or add a summarization endpoint.
+
+## Archive chat in the extension (separate follow-up)
+
+Recorded 2026-10-09. Keep this work separate from the ChatGPT backup branch; leave this note out of that branch's commit.
+
+Add an Archive Chat tab for fast local search, summaries, and follow-up questions. Reuse the archive HTTP search/read endpoints and the project-local Ollama service. The existing `scripts/mcp-archive.mjs` exposes those same endpoints through stdio MCP; a browser extension would need a bridge for that transport. A shared HTTP MCP interface remains an option if interoperability becomes useful.
+
+MCP provides tool discovery and invocation transport; the application still supplies tools to the model and executes its requests. Natural search behavior depends on model instructions, tool definitions, and application routing, whether retrieval uses MCP or direct HTTP. See [Ollama tool calling](https://docs.ollama.com/capabilities/tool-calling).
+
+Start with retrieval by default for new archive questions: the user should not need to say "search." Show matches immediately, then stream a cited answer from a bounded set of relevant passages. Reuse already retrieved passages for requests such as "make that shorter"; retrieve again for a new topic or a question the existing passages cannot support. Explicitly distinguish missing evidence from a supported answer.
+
+If adaptive retrieval is needed, provide a tool-capable generation model with the existing `search_archive` and `read_document` operations, concise usage instructions, and a bounded tool loop. The local service validates and executes calls and returns source metadata. Benchmark this against default retrieval for latency, missed searches, unnecessary searches, and unsupported answers before choosing the routing policy. Tool calling support and reliable search decisions must be tested for the exact installed model.
+
+Keep context and concurrency bounded, preserve citations in follow-ups, and treat retrieved text as source material rather than instructions. This is a design note; no chat UI, model installation, or tool loop is implemented here.

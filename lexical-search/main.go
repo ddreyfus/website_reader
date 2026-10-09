@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"lexical-search/archive"
 	"lexical-search/config"
 	"lexical-search/routes"
 	"lexical-search/server"
@@ -37,6 +38,15 @@ func main() {
 	}
 	server.RegisterHandlersWithOptions(router, si, options)
 	routes.RegisterRetrievalHandlers(router)
+	backupDB := archive.InitWorkspacesDB()
+	defer backupDB.Close()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := routes.RegisterChatGPTHandlers(router, backupDB, filepath.Join(home, "sources", "ChatGPT")); err != nil {
+		log.Fatal(err)
+	}
 
 	// Add health check
 	router.GET(options.BaseURL+"/health", func(c *gin.Context) {

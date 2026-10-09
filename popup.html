@@ -35,6 +35,20 @@
         <button id="download-log" type="button" disabled>Download latest log</button>
       </div>
 
+      <details id="chatgpt-backup">
+        <summary>ChatGPT conversation backup (preview)</summary>
+        <p>Back up conversation JSON and readable text locally. Inventory finishes first, then conversations download one at a time. Partial downloads resume. Alternate branches and attachment files are not included yet.</p>
+        <label for="chatgpt-backup-scope">Account and workspace label</label>
+        <input id="chatgpt-backup-scope" type="text" pattern="[A-Za-z0-9_\-]{1,128}" maxlength="128" placeholder="personal" required aria-describedby="chatgpt-backup-help">
+        <p id="chatgpt-backup-help">Use a different label for each account/workspace and verify you are signed in to that account. Uses the local archive connection port. Add ~/sources/ChatGPT to directories to index for search and RAG.</p>
+        <button id="chatgpt-backup-sync" type="button">Sync conversations</button>
+        <button id="chatgpt-backup-pause" type="button">Pause backup</button>
+        <p id="chatgpt-backup-summary">No backup inventory loaded yet.</p>
+        <p id="chatgpt-backup-status" role="status" aria-atomic="true">Select Sync conversations once to enable automatic backup on ChatGPT. Rechecks every five minutes while ChatGPT is open. Pause disables automatic backup. Work continues when you switch tabs or close this panel.</p>
+        <p id="chatgpt-backup-updated"></p>
+        <details><summary>Backup diagnostic log (last 200 events)</summary><button id="chatgpt-backup-download-log" type="button">Download backup log</button><pre id="chatgpt-backup-log"></pre></details>
+      </details>
+
       <details id="archive-settings">
         <summary>Local archive settings</summary>
         <label for="archive-connection-port">Connect to port</label>

@@ -135,3 +135,7 @@ pre {
 
 #attachment-file { max-width: 100%; }
 #attachment-status { margin: 0; font-size: 13px; overflow-wrap: anywhere; white-space: pre-line; }
+#chatgpt-backup-summary {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}

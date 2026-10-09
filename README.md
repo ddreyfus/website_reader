@@ -193,3 +193,90 @@ The extension requests:
 - **Recent code changes do not appear:** Reload the unpacked extension from `chrome://extensions`, then reopen its popup.
 
 The self-contained [Bleve search service](lexical-search/README.md) provides local chunk indexing and search for the archive.
+
+
+## ChatGPT conversation backup preview
+
+The side panel's **ChatGPT conversation backup (preview)** saves conversation
+JSON pages and readable Markdown through the local service. Open ChatGPT while
+signed in, enter a distinct account/workspace label, and select **Sync conversations**.
+The label is bound to the observed session user/workspace identity; a mismatch
+stops the run. Tokens remain in the ChatGPT page and are never sent to the local
+service. Pause retains saved files, partial pages, and queued work.
+
+One inactive owned tab runs two sequential activities:
+
+1. **Inventory:** enumerate projects, recent/archived conversation lists, and
+   each project's conversations. Commit each batch and its continuation together
+   in SQLite. Downloads cannot start until every list finishes. Interrupted scans
+   resume their saved cursor. After a full baseline, each list can stop at its
+   previous update-time watermark only when its full baseline and current pages
+   have descending timestamps; pinned entries do not establish the stopping
+   boundary. A two-minute overlap covers ties. Daily reconciliation and explicit
+   Sync force full traversal. Recheck each list's first page before declaring it
+   finished; if it changed during enumeration, restart that list.
+2. **Conversation download:** claim one conversation, save each JSON page before
+   requesting its older-page cursor, and assemble only after the complete cursor
+   chain exists. Batches stop after ten pages and release the lease without a
+   failure; the next batch resumes the saved cursor. A resumed download revalidates
+   its first page. Changed first pages or rejected continuation cursors start a
+   new generation without overwriting the last good backup.
+
+Enabled backup requests inventory checks every five minutes while a user ChatGPT
+page is open. Alarms resume unfinished inventory or conversation pages every
+30 seconds. Switching active tabs or closing the panel does not change the fetch
+target. Jobs use recoverable leases; failed conversations back off while other
+eligible conversations can proceed. HTTP 429 respects Retry-After (60–3600 seconds).
+Remote update timestamps drive requeueing; conversations lacking timestamps use
+a daily age-based recheck. An unchanged observation creates no new job.
+
+The panel separates durable backup coverage from mutually exclusive queue counts:
+first backups, refreshes, fetching, and awaiting retry. Inventory status, current
+activity, failure reasons, destination, and last successful save remain visible.
+**Backup diagnostic log** retains 200 timestamped events; **Download backup log**
+exports it independently of collection diagnostics.
+
+Installed archive, Ollama, and tunnel LaunchAgents capture stdout and stderr in
+`.local-mcp/bleve.log`, `.local-mcp/ollama.log`, and `.local-mcp/tunnel.log`.
+The shared service log supervisor rotates on UTC day changes or at 25 MiB,
+compresses previous logs, and retains up to 14 days and 56 compressed files per
+service (whichever limit is reached first). Rotation does not restart the service.
+The archive service logs backup actions, scope/conversation IDs, generations,
+discovery batch counts, claims, message/byte counts, content hashes, failures,
+retry timing, request status, and duration. It does not log snapshot bodies or
+lease tokens. Run the existing service installation scripts to apply the
+supervisor when upgrading an older LaunchAgent.
+
+Snapshots are stored under:
+
+```text
+~/sources/ChatGPT/<account-workspace-label>/conversations/<conversation-id>/
+  conversation.md
+  <content-hash>.json
+```
+
+Stable ID paths keep renamed or moved conversations from producing duplicate
+searchable transcripts. Project membership and titles are recorded in SQLite;
+project-name folders are not implemented yet. Each changed snapshot retains its
+JSON revision. The Markdown file contains the latest snapshot with user/assistant
+attribution and the original conversation URL. Repeated unchanged saves do not
+rewrite files. The queue/inventory tables live in the service's existing
+`workspaces.sqlite` beneath the configured archive's indexes directory. Back up
+that database along with source files if you need to preserve queue metadata.
+
+Add `~/sources/ChatGPT` to **Directories to index** in local archive settings (or
+use an existing enclosing watched root), save, and restart the service to make
+Markdown snapshots searchable through existing archive search and MCP tools.
+Saving and indexing are separate operations. The preview does not add a new
+conversation-search UI or automatically inject archived exchanges into chats.
+
+**Coverage remains limited:** structured pagination is implemented against
+internal website endpoints, not a supported developer export API. Live endpoint
+compatibility and completeness still require validation. Alternate branches and
+attachment files are not downloaded; raw message/page metadata is retained and
+unsupported readable content is marked explicitly. Previously saved rendered
+snapshots remain until refreshed. Point-in-time consistency across all lists and
+edits to older content cannot be guaranteed by head-page revalidation alone.
+Remote deletions never delete local files. Credentials are not sent to the local
+service or written to backup files. Use native account export as an independent
+backup while this preview is being validated.

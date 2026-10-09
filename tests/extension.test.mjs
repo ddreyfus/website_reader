@@ -82,7 +82,7 @@ test("Website Reader extension", async (t) => {
   // remain optional; the popup's grant/decline boundary is tested below.
   const extensionPath = path.join(profilePath, "extension");
   await fs.mkdir(extensionPath);
-  for (const name of ["collection.js", "manifest.json", "popup.js", "popup.html", "popup.css", "background.js", "issue-digest-prompt.md", "email-digest-prompt.md"]) {
+  for (const name of ["collection.js", "chatgpt-backup.js", "manifest.json", "popup.js", "popup.html", "popup.css", "background.js", "issue-digest-prompt.md", "email-digest-prompt.md"]) {
     await fs.copyFile(path.join(sourceExtensionPath, name), path.join(extensionPath, name));
   }
   const manifest = JSON.parse(await fs.readFile(path.join(extensionPath, "manifest.json"), "utf8"));

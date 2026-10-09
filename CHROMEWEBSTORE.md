@@ -2,7 +2,7 @@
 
 UI cleanup: the ChatGPT action names the file it will attach and whether it is a chosen file or the latest completed collection. Refresh the panel screenshots before submission.
 
-Last updated: 2026-10-08. Local development draft; no submission requested.
+Last updated: 2026-10-09. Local development draft; no submission requested.
 
 Free Press digests collect only Free Press articles. External email links and externally redirected sources are excluded from article extraction.
 
@@ -30,7 +30,7 @@ Store icon and screenshots are not prepared. Before publishing, capture the Gmai
 
 | Permission | Purpose |
 |---|---|
-| alarms | Resume saved email collection if Chrome suspends the background worker. |
+| alarms | Resume saved email collection and queued ChatGPT snapshot backups after worker suspension. |
 | clipboardWrite | Copy the selected digest prompt on request. |
 | downloads | Save reading documents and logs, clean up interrupted downloads. |
 | scripting | Read the selected email or issue and attach the batch to ChatGPT when requested. |
@@ -40,13 +40,15 @@ Store icon and screenshots are not prepared. Before publishing, capture the Gmai
 | www.economist.com, alumni.berkeley.edu, cacm.acm.org, www.nytimes.com | Read supported issue pages and retrieve their linked articles. |
 | mail.google.com | Capture the selected expanded email, including sender, date, body, and links. |
 | Optional HTTP/HTTPS sites | Read article tabs linked by the selected email; request linked hosts and ask for redirected hosts on Continue. |
-| Optional chatgpt.com | Attach the completed batch to a ChatGPT draft when the user selects Open in ChatGPT. |
+| Optional chatgpt.com | Attach selected reading content to a draft, or read authenticated conversation pages in inactive tabs after the user starts the backup preview. |
 
 ## Privacy and data use
 
 The extension handles selected website content and personal communications, including sender addresses and any personal information present in the chosen email. The latest batch, source URLs, progress, and logs stay in local extension storage until replaced or removed. Downloaded files remain until the user deletes them.
 
 Article requests use the browser session; destination sites receive normal requests, and tracking links may register clicks. Email text is not sent to linked sites. Chosen files are read only when Open in ChatGPT is selected and are not saved in extension storage. Open in ChatGPT sends the selected file or completed document to ChatGPT; submission of the chat remains under user control. There is no developer telemetry or developer-operated collection server.
+
+The opt-in ChatGPT backup preview reads project/conversation lists and structured message pages using the signed-in browser session and sends them to the local archive service on this computer. Authentication credentials remain in the page and are not stored in the archive. It retains conversation content, titles, source URLs, project membership, an account/workspace identity, and resumable progress locally. Snapshots, page checkpoints, and prior JSON revisions remain until the user removes them; pausing or uninstalling does not delete backups. Accessible-list completion is tracked separately from backup completion. Alternate branches and attachment files are not backed up. Refresh screenshots to include the preview controls.
 
 Data is not sold, used for unrelated purposes, or used for lending decisions. Users can remove optional site access in Chrome and remove extension data by uninstalling the extension. ChatGPT uploads are governed by that service's data controls.
 
@@ -62,6 +64,7 @@ Local unpacked installation only. Publisher, public contact, support URL, distri
 
 | Version | Date | Changes | Status |
 |---|---|---|---|
+| 0.1.0 | 2026-10-09 | ChatGPT structured-page backup preview with resumable local inventory and background queue. Inventory finishes before sequential conversation downloads. Verified update ordering enables incremental early stopping after a full baseline; full reconciliation runs daily. Shows backup coverage separately from queued work and retry reasons. Failed conversations do not stop other backups. Incomplete coverage is disclosed. | Local draft |
 | 0.1.0 | 2026-10-08 | Explicit next ChatGPT file and source; accurate file-clearing control and current-page status. | Local draft |
 | 0.1.0 | 2026-10-06 | Digest archive comparisons use a bounded NEW/ADDS/REPEAT familiarity test. | Local draft |
 | 0.1.0 | 2026-10-06 | Existing Markdown/text attachment selection, explicit paused-batch replacement, and Economist weekly-edition navigation. Refresh control screenshots. | Local draft |

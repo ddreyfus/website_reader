@@ -501,3 +501,42 @@ chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
 });
 
 loadState();
+
+
+const chatGPTBackupScope = document.querySelector("#chatgpt-backup-scope");
+const chatGPTBackupStatus = document.querySelector("#chatgpt-backup-status");
+document.querySelector("#chatgpt-backup-download-log").addEventListener("click", async () => {
+  try {
+    const { chatGPTBackupLog = "" } = await chrome.storage.local.get("chatGPTBackupLog");
+    if (!chatGPTBackupLog) throw new Error("No backup log is available yet.");
+    await download(`${chatGPTBackupLog}\n`, "chatgpt-backup.log", "text/plain");
+  } catch (error) { chatGPTBackupStatus.textContent = error.message || String(error); }
+});
+async function restoreChatGPTBackup(restoreScope = true) {
+  const saved = await chrome.storage.local.get(["chatGPTBackupScope", "chatGPTBackupProgress", "chatGPTBackupSummary", "chatGPTBackupUpdatedAt", "chatGPTBackupSavedAt", "chatGPTBackupLog"]);
+  if (restoreScope && saved.chatGPTBackupScope) chatGPTBackupScope.value = saved.chatGPTBackupScope;
+  if (saved.chatGPTBackupProgress) chatGPTBackupStatus.textContent = saved.chatGPTBackupProgress;
+  document.querySelector("#chatgpt-backup-log").textContent = saved.chatGPTBackupLog || "No backup diagnostic events recorded yet.";
+  document.querySelector("#chatgpt-backup-summary").textContent = saved.chatGPTBackupSummary || "No backup inventory loaded yet.";
+  document.querySelector("#chatgpt-backup-updated").textContent = [
+    saved.chatGPTBackupUpdatedAt ? `Last update: ${new Date(saved.chatGPTBackupUpdatedAt).toLocaleString()}.` : "",
+    saved.chatGPTBackupSavedAt ? `Last successful save: ${new Date(saved.chatGPTBackupSavedAt).toLocaleString()}.` : "No successful saves recorded yet."
+  ].filter(Boolean).join(" ");
+}
+restoreChatGPTBackup().catch(error => { chatGPTBackupStatus.textContent = error.message; });
+for (const action of ["sync", "pause"]) {
+  document.querySelector(`#chatgpt-backup-${action}`).addEventListener("click", async () => {
+    try {
+      if (action === "sync" && !chatGPTBackupScope.reportValidity()) return;
+      if (action === "sync" && !await chrome.permissions.request({ origins: ["https://chatgpt.com/*"] })) throw new Error("ChatGPT site access was declined.");
+      const result = await chrome.runtime.sendMessage({ type: "chatGPTBackup", action, scope: chatGPTBackupScope.value });
+      if (!result?.ok) throw new Error(result?.error || "Backup could not start.");
+      if (action === "sync") chatGPTBackupStatus.textContent = "Backup enabled. Discovering conversations…";
+    } catch (error) { chatGPTBackupStatus.textContent = error.message || String(error); }
+  });
+}
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && ["chatGPTBackupProgress", "chatGPTBackupSummary", "chatGPTBackupUpdatedAt", "chatGPTBackupSavedAt"].some(key => key in changes)) {
+    restoreChatGPTBackup(false).catch(error => { chatGPTBackupStatus.textContent = error.message; });
+  }
+});

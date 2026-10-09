@@ -48,6 +48,7 @@ domain = f"gui/{os.getuid()}"
 target = f"{domain}/{label}"
 plist = Path.home() / "Library/LaunchAgents" / f"{label}.plist"
 log = root / f".local-mcp/{service}.log"
+arguments = [sys.executable, str(root / "scripts/service-log.py"), str(log), *arguments]
 plist.parent.mkdir(parents=True, exist_ok=True)
 with plist.open("wb") as output:
     plistlib.dump({

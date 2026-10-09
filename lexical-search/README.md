@@ -238,3 +238,40 @@ semantic deadline and lexical fallback during runtime startup or failure.
 Native vector calls observe cancellation cooperatively; the deadline cannot
 forcibly interrupt arbitrary C code. Use the semantic build/test scripts to apply
 the pinned FAISS selector fix. See [SEMANTIC_SEARCH.md](../SEMANTIC_SEARCH.md).
+
+
+## ChatGPT paginated backup API (preview)
+
+All routes are under `/api/v1/chatgpt`. GET `status` returns backup/queue rows and
+whether the persisted inventory scan has completed. GET `checkpoint?scope=...`
+returns the inventory continuation. POST `discover` upserts up to 1000 entries and
+commits their checkpoint atomically. Remote update-time changes, renames, and
+project moves increment the job generation; repeated observations are idempotent.
+`recheck` schedules only saved rows with missing remote timestamps once 24 hours old.
+
+POST `claim` requires a completed inventory checkpoint and returns one job with a
+120-second random lease. `page` validates and saves an immutable raw conversation
+page under `(scope, id, generation, cursor)` and renews the lease. `pages` follows
+that generation's saved cursor chain and returns its next missing page. `verify`
+compares a fresh first page's messages/current node against the saved head.
+`yield` releases a partial job without recording a failure. `restart` queues a
+new generation for changed pages or invalid continuation cursors. `fail` records
+the reason and a bounded 60–3600 second retry delay. Old leases cannot write pages
+or acknowledge a replacement worker's job.
+
+`complete` rejects missing/cyclic pages or conflicting message identities,
+assembles older pages before newer pages, deduplicates overlapping messages, and
+uses the existing atomic archive writer. Raw JSON revisions retain the pages;
+Markdown includes readable user/assistant text and marks unsupported content.
+Legacy `save` remains available for existing rendered-snapshot clients. A newer
+observed generation remains pending when an older claimed generation completes.
+
+Requests accept local/extension callers and reject website origins. Request bodies
+are limited to 16 MiB; assembled page storage has a 64 MiB per-generation budget.
+Credentials never enter this service. SQLite retains partial pages and inventory
+continuations across restarts. Content lives at
+`~/sources/ChatGPT/<scope>/conversations/<id>/`; JSON is content-addressed and
+`conversation.md` is replaced atomically. Unchanged content is not rewritten;
+symlink destinations are rejected. Add the source root to watched directories for
+search/MCP indexing. Internal API compatibility, branch and attachment coverage,
+and live inventory completeness remain under validation.
