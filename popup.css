@@ -134,8 +134,23 @@ pre {
 #archive-settings input:focus-visible, #archive-settings textarea:focus-visible { outline: 3px solid #efb954; outline-offset: 2px; }
 
 #attachment-file { max-width: 100%; }
+#archive-chat label { display: block; margin: 12px 0 4px; }
+#archive-chat textarea, #archive-chat select { width: 100%; box-sizing: border-box; padding: 8px; font: inherit; font-size: 16px; }
+#archive-chat p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; }
+#archive-chat button { margin: 6px 0; }
+#archive-chat-transcript { max-height: 420px; overflow: auto; }
+#archive-chat-transcript article { border-bottom: 1px solid #cbd0c9; }
+#archive-chat-results a, #archive-chat-transcript a { overflow-wrap: anywhere; }
 #attachment-status { margin: 0; font-size: 13px; overflow-wrap: anywhere; white-space: pre-line; }
 #chatgpt-backup-summary {
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
+
+#archive-chat .archive-chat-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#archive-chat .archive-chat-actions > button { flex: 1 1 130px; width: auto; min-width: 0; }
+#archive-chat h2 { font-size: 14px; margin: 16px 0 8px; }
+#archive-chat-search-results { margin-top: 10px; }
+.archive-chat-window main > :not(#archive-chat) { display: none; }
+.archive-chat-window #archive-chat { margin-top: 0; }
+.archive-chat-window #archive-chat-transcript { max-height: 50dvh; }

@@ -31,10 +31,10 @@ Store icon and screenshots are not prepared. Before publishing, capture the Gmai
 | Permission | Purpose |
 |---|---|
 | alarms | Resume saved email collection and queued ChatGPT snapshot backups after worker suspension. |
-| clipboardWrite | Copy the selected digest prompt on request. |
+| clipboardWrite | Copy the selected digest prompt or local archive chat and its references on request. |
 | downloads | Save reading documents and logs, clean up interrupted downloads. |
 | scripting | Read the selected email or issue and attach the batch to ChatGPT when requested. |
-| storage | Keep the current batch, progress, and log for resuming collection. |
+| storage | Keep the current batch, progress, collection log, and a local archive chat draft with source excerpts. |
 | sidePanel | Keep Website Reader visible beside article tabs and permission prompts until the user closes it. |
 | tabs | Identify the current reading page, detect navigation, and open ChatGPT. |
 | www.economist.com, alumni.berkeley.edu, cacm.acm.org, www.nytimes.com | Read supported issue pages and retrieve their linked articles. |
@@ -49,6 +49,8 @@ The extension handles selected website content and personal communications, incl
 Article requests use the browser session; destination sites receive normal requests, and tracking links may register clicks. Email text is not sent to linked sites. Chosen files are read only when Open in ChatGPT is selected and are not saved in extension storage. Open in ChatGPT sends the selected file or completed document to ChatGPT; submission of the chat remains under user control. There is no developer telemetry or developer-operated collection server.
 
 The opt-in ChatGPT backup preview reads project/conversation lists and structured message pages using the signed-in browser session and sends them to the local archive service on this computer. Authentication credentials remain in the page and are not stored in the archive. It retains conversation content, titles, source URLs, project membership, an account/workspace identity, and resumable progress locally. Snapshots, page checkpoints, and prior JSON revisions remain until the user removes them; pausing or uninstalling does not delete backups. Accessible-list completion is tracked separately from backup completion. Alternate branches and attachment files are not backed up. Refresh screenshots to include the preview controls.
+
+Local archive chat sends selected archive excerpts and conversation history only to the project-local Ollama service. Completed exchanges and evidence remain in extension local storage until cleared or replaced, and are not automatically ingested into the archive. Copy exports the transcript and evidence to the clipboard; Continue in ChatGPT explicitly uploads them as a Markdown attachment. Archive search queries follow the existing local service logging policy.
 
 Data is not sold, used for unrelated purposes, or used for lending decisions. Users can remove optional site access in Chrome and remove extension data by uninstalling the extension. ChatGPT uploads are governed by that service's data controls.
 

@@ -280,3 +280,50 @@ edits to older content cannot be guaranteed by head-page revalidation alone.
 Remote deletions never delete local files. Credentials are not sent to the local
 service or written to backup files. Use native account export as an independent
 backup while this preview is being validated.
+
+## Local archive chat (preview)
+
+The side panel's **Chat with the local archive** section searches the existing
+archive and uses an installed text-generation model in the project Ollama service
+(`127.0.0.1:11435`). Load local models, enter a question, and choose **Ask archive**.
+**Search passages** also offers **Summarize this document**; documents longer than
+6000 bytes receive an explicitly partial summary. The first version retrieves up
+to five passages per question rather than using an adaptive model tool loop.
+
+**Pop out chat** opens the chat controls in a separate resizable window.
+**Return to side panel** docks it back into the original browser window. Both
+views share the draft, selected model, and unsent question; closing the pop-out
+keeps completed exchanges. Opening the pop-out again focuses an existing chat
+window rather than creating another.
+
+Completed exchanges and their source excerpts remain a single draft in extension
+local storage across panel closure and browser restart. **New chat / clear draft**
+removes that draft. Chats are not ingested into the archive. Closing the panel
+interrupts an unfinished answer. Failed answers preserve the previous draft and
+leave the question available while the panel remains open.
+
+**Copy chat and references** includes role labels, model names, archive links and
+IDs, available explicit source URLs, coverage notes, and the exact supplied
+excerpts. **Continue in ChatGPT** reuses the existing attachment handoff to attach
+that Markdown; you add the next question and send it. Local archive URLs are not
+accessible remotely, so the attached evidence matters. Excerpts and model answers
+may be incomplete or incorrect; follow-up answers retain stable source labels.
+
+The model receives up to two recent exchanges and a selection of source excerpts,
+prioritizing the latest search and references in recent messages. Source labels
+remain stable even when some excerpts are omitted. A visible notice explains
+when context is reduced; the complete draft and evidence remain available for
+copying and ChatGPT handoff. Search results are collapsible, and Clear search
+removes results and the input without clearing the conversation.
+
+Generation uses a 10,000-byte combined history/evidence budget, a 16,384-token
+context, a 1024-token output cap, a two-minute request timeout, and one concurrent
+answer across clients. An individually oversized question/excerpt still requires a shorter question or
+a new chat. Search remains a separate operation and retains its existing semantic
+fallback behavior while Ollama is busy.
+
+The service exposes `GET /api/v1/archive/models` and
+`POST /api/v1/archive/chat` (model, alternating user/assistant messages, source
+excerpts). The latter accepts extension/local JSON requests, validates bounded
+input and model completion capability, and makes no chat files or database writes.
+It reuses the Ollama HTTP client in both ordinary and vector-enabled builds.

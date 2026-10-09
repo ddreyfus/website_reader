@@ -38,7 +38,7 @@ class SemanticLaunchAgentTests(unittest.TestCase):
                 self.assertEqual(plist["ThrottleInterval"], 10)
                 env = plist["EnvironmentVariables"]
                 if service == "ollama":
-                    self.assertEqual(plist["ProgramArguments"], [str(binary), "serve"])
+                    self.assertEqual(plist["ProgramArguments"], [sys.executable, str(root / "scripts/service-log.py"), str(root / ".local-mcp/ollama.log"), str(binary), "serve"])
                     self.assertEqual(env["OLLAMA_HOST"], "127.0.0.1:11435")
                     self.assertEqual(env["OLLAMA_NO_CLOUD"], "1")
                     self.assertEqual(env["OLLAMA_MODELS"], str(root / ".local-mcp/ollama/models"))

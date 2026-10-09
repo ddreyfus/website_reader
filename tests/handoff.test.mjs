@@ -135,6 +135,28 @@ test("ChatGPT handoff uses the saved batch from any active tab", async (t) => {
       await popup.close();
     });
 
+    await t.test("archive pop-out attaches its conversation and references", async () => {
+      startupDelay = 0;
+      await worker.evaluate(() => chrome.storage.local.set({ archiveChatDraft: {
+        model: "fixture", messages: [{ role: "user", content: "A question" }, { role: "assistant", content: "An answer [S1]", model: "fixture" }],
+        sources: [{ title: "Evidence", document_id: "doc", text: "Recorded evidence", archive_url: "http://127.0.0.1:8766/file/doc", coverage: "Passage" }]
+      } }));
+      const popup = await context.newPage();
+      await popup.goto(`chrome-extension://${extensionId}/popup.html?archiveChatWindow=1`);
+      await popup.evaluate(() => { chrome.permissions.request = async () => true; });
+      await popup.locator("#archive-chat-transcript article").first().waitFor();
+      const content = await popup.evaluate(() => archiveChatExport());
+      const chat = await context.newPage();
+      await chat.goto("https://chatgpt.com/");
+      await popup.bringToFront();
+      await popup.getByRole("button", { name: "Continue in ChatGPT", exact: true }).click();
+      await chat.getByRole("status").waitFor();
+      assert.equal(await chat.locator("[data-composer-attachments]").getAttribute("data-content"), content);
+      assert.equal(await chat.locator('[aria-label="Attach files"]').evaluate(input => input.files[0].name), "archive-conversation.md");
+      await chat.close(); await popup.close();
+      await worker.evaluate(() => chrome.storage.local.remove("archiveChatDraft"));
+    });
+
     await t.test("shows a manual-attachment fallback when ChatGPT requires login", async () => {
       signedIn = false;
       const popup = await context.newPage();

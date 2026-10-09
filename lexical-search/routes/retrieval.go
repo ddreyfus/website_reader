@@ -29,6 +29,7 @@ import (
 )
 
 func RegisterRetrievalHandlers(router *gin.Engine) {
+	registerArchiveChatHandlers(router)
 	router.GET("/api/v1/corpora", listCorpora)
 	router.POST("/api/v1/archive/search", searchArchive)
 	router.GET("/api/v1/documents", listDocuments)

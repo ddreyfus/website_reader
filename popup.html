@@ -35,6 +35,37 @@
         <button id="download-log" type="button" disabled>Download latest log</button>
       </div>
 
+      <details id="archive-chat">
+        <summary>Chat with the local archive (preview)</summary>
+        <button id="archive-chat-window" type="button">Pop out chat</button>
+        <p>Search passages, summarize a document, and ask follow-up questions locally. Your draft survives panel closure but is not added to the archive. Closing the panel interrupts an unfinished answer; send again to retry.</p>
+        <button id="archive-chat-models" type="button">Load local models</button>
+        <label for="archive-chat-model">Local model</label>
+        <select id="archive-chat-model" required><option value="">Load models first</option></select>
+        <form id="archive-chat-form">
+          <label for="archive-chat-question">Question or search terms</label>
+          <textarea id="archive-chat-question" rows="3" maxlength="2000" required></textarea>
+          <p id="archive-chat-actions-help">Search passages finds excerpts. Ask archive searches and writes a local answer using your recent conversation.</p>
+          <div class="archive-chat-actions">
+            <button id="archive-chat-search" type="button" aria-describedby="archive-chat-actions-help">Search passages</button>
+            <button id="archive-chat-ask" type="submit" class="primary" aria-describedby="archive-chat-actions-help">Ask archive</button>
+          </div>
+        </form>
+        <p id="archive-chat-status" role="status" aria-atomic="true">Load an installed text-generation model to begin. Uses the local archive connection port.</p>
+        <details id="archive-chat-search-results">
+          <summary id="archive-chat-results-summary">Search results</summary>
+          <button id="archive-chat-clear-search" type="button">Clear search</button>
+          <div id="archive-chat-results"></div>
+        </details>
+        <h2>Conversation</h2>
+        <div id="archive-chat-transcript" aria-label="Archive conversation"></div>
+        <button id="archive-chat-clear" type="button">New chat / clear draft</button>
+        <div class="archive-chat-actions">
+          <button id="archive-chat-copy" type="button">Copy chat and references</button>
+          <button id="archive-chat-handoff" type="button">Continue in ChatGPT</button>
+        </div>
+      </details>
+
       <details id="chatgpt-backup">
         <summary>ChatGPT conversation backup (preview)</summary>
         <p>Back up conversation JSON and readable text locally. Inventory finishes first, then conversations download one at a time. Partial downloads resume. Alternate branches and attachment files are not included yet.</p>

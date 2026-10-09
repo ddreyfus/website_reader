@@ -8,7 +8,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "chatGPTBackup") return handleChatGPTBackup(message, sender, sendResponse);
   if (message.type === "handoff") {
     (async () => {
-      if (sender.url !== chrome.runtime.getURL("popup.html")) throw new Error("Use Website Reader's ChatGPT button.");
+      if (sender.url?.split(/[?#]/, 1)[0] !== chrome.runtime.getURL("popup.html")) throw new Error("Use Website Reader's ChatGPT button.");
       const { collectionState: state } = await chrome.storage.local.get("collectionState");
       const selectedFile = typeof message.content === "string" && typeof message.filename === "string";
       if (!selectedFile && state?.status !== "completed") throw new Error("Complete a collection or choose a file first.");

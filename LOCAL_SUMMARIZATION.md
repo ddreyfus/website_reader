@@ -61,3 +61,66 @@ Start with retrieval by default for new archive questions: the user should not n
 If adaptive retrieval is needed, provide a tool-capable generation model with the existing `search_archive` and `read_document` operations, concise usage instructions, and a bounded tool loop. The local service validates and executes calls and returns source metadata. Benchmark this against default retrieval for latency, missed searches, unnecessary searches, and unsupported answers before choosing the routing policy. Tool calling support and reliable search decisions must be tested for the exact installed model.
 
 Keep context and concurrency bounded, preserve citations in follow-ups, and treat retrieved text as source material rather than instructions. This is a design note; no chat UI, model installation, or tool loop is implemented here.
+
+
+## Implementation on `codex/local-archive-chat`
+
+### Remaining archive chat TODOs
+
+- Before the initial archive search, give the LLM the user's prompt and recent conversation (if any) so it can determine the evidence needed and formulate one or more targeted search queries. This applies to the first prompt as well as follow-ups; users should not have to phrase their requests as search queries. Bound query planning and any subsequent search/read tool loop, and evaluate retrieval quality, latency, and memory use.
+- Summarize complete long documents through chunking and synthesis rather than only their beginning.
+- Stream answers as they are generated.
+- Evaluate a smaller generation model and explicit model-unload controls for memory-constrained use.
+- Evaluate answer faithfulness, citation support, and coverage on representative archive questions and articles.
+
+The extension now has a local archive chat preview using the existing search/read
+endpoints, a bounded Ollama generation endpoint, stable source labels, local draft
+persistence, document summaries (explicitly partial above 6000 bytes), and an
+explicit transcript/evidence handoff to ChatGPT. It uses default retrieval on each
+question; adaptive tool calling and multi-part long-document summaries remain
+future work. Draft chats are not automatically archived. See README for limits.
+
+Live smoke check on 2026-10-09: installed `qwen3.5:9b` in the existing project
+Ollama store. The running vector-enabled archive service discovered it as a
+completion model. A real archive search for solar power supplied three excerpts
+from `CACM Sept 2026.pdf`; the model returned a cited answer in 38.0 seconds and
+a cited follow-up in 6.9 seconds. Neither reached the output cap. A concurrent
+search returned three results in 0.146 seconds with partial semantic coverage.
+These checks verify integration, not factual accuracy or a model ranking.
+
+Validation: 56 existing extension tests plus the new archive-chat browser test
+passed. The new test covers draft restore, follow-up evidence reuse, safe text
+rendering, failure preservation, partial document summaries, exact handoff
+payloads, and clearing a draft from another panel during inference. All ordinary
+and vector-enabled Go packages and 13 semantic Python tests passed. Corrected a
+pre-existing LaunchAgent test expectation for the log supervisor. Reviewed state,
+source labels, partial coverage, context bounds, and explicit handoff behavior;
+no outstanding implementation findings. Live ChatGPT upload was not repeated
+with real archive content; the existing handoff regression tests passed.
+
+UX/context follow-up: question controls now precede the conversation; Search/Ask
+and Copy/Continue use paired responsive rows. Search results and references use
+native disclosures. Search opens its results; Ask leaves them collapsed. Clear
+search removes the input/results while retaining the conversation. New answers
+scroll into view without resetting the scroll position on unrelated actions.
+The model receives up to two recent exchanges and selected evidence within the
+existing 10,000-byte budget, with current retrieval prioritized. Full draft and
+source excerpts remain stored/exportable. Explicit validated source labels keep
+citations stable for nonconsecutive selections; reduced context is disclosed.
+Focused browser and Go tests passed, including a 24-message/27-source draft,
+search clearing, paired button positions at 420px, and exact source-label reuse.
+A live request with only source S17 returned an answer citing S17. Rebuilt and
+restarted the service with semantic opt-in preserved, reloaded the extension,
+and verified the revised controls in the installed Chrome panel.
+
+Pop-out follow-up: Pop out chat opens a resizable chat-only extension window;
+Return to side panel reopens the original browser's side panel and closes the
+pop-out. Completed draft/evidence, selected model, unsent composer text, and
+archive connection are preserved. Repeated pop-out requests focus the existing
+window. The ChatGPT handoff accepts the same trusted extension page with its
+pop-out query parameters. Browser tests cover pop-out/return, reuse, composer
+preservation, and an actual mocked ChatGPT attachment from the pop-out; eight
+handoff regressions pass. No model-residency policy was changed: generation still
+uses keep_alive=2m, and UI closure/docking does not explicitly unload a model.
+The running Ollama process inspection showed Qwen unloaded and only the roughly
+680 MB embedding model resident.

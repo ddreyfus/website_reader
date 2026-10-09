@@ -1,0 +1,164 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { chromium } from 'playwright';
+
+test('archive chat preserves evidence and drafts, summarizes partial text, and exports without archiving', async () => {
+  const requests = [];
+  let fail = false;
+  const service = http.createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const body = raw ? JSON.parse(raw) : null;
+    requests.push({ url: req.url, body });
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/api/v1/archive/models') res.end(JSON.stringify({ models: ['test-local'] }));
+    else if (req.url === '/api/v1/archive/search') res.end(JSON.stringify({ semantic_status: 'disabled', results: [{ title: '<script>evidence</script>', document_id: 'doc', chunk_id: 'chunk', text: 'Source: https://example.test/article\nA recorded fact.', url: '/file/doc?chunk_id=chunk' }] }));
+    else if (req.url.startsWith('/api/v1/documents/')) res.end(JSON.stringify({ text: 'Source: https://example.test/article\nBeginning only.', url: '/file/doc', truncated: true }));
+    else if (req.url === '/api/v1/archive/chat') {
+      if (fail) { res.statusCode = 502; res.end(JSON.stringify({ error: 'Model unavailable' })); }
+      else res.end(JSON.stringify({ model: 'test-local', content: 'An answer grounded in evidence [S1].', truncated: false }));
+    } else { res.statusCode = 404; res.end('{}'); }
+  });
+  await new Promise(resolve => service.listen(0, '127.0.0.1', resolve));
+  const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'archive-chat-'));
+  let context;
+  try {
+    const extension = path.resolve(import.meta.dirname, '..');
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    let [worker] = context.serviceWorkers(); worker ||= await context.waitForEvent('serviceworker');
+    await worker.evaluate(port => chrome.storage.local.set({ archiveConnectionPort: port }), service.address().port);
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 420, height: 900 });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+    await page.locator('#archive-chat > summary').click();
+    await page.getByRole('button', { name: 'Load local models', exact: true }).click();
+    await page.getByText('Choose a model, then ask a question.', { exact: true }).waitFor();
+    const searchBox = await page.locator('#archive-chat-search').boundingBox();
+    const askBox = await page.locator('#archive-chat-ask').boundingBox();
+    assert.equal(searchBox.y, askBox.y);
+    assert.ok(searchBox.x < askBox.x);
+    const question = page.getByLabel('Question or search terms', { exact: true });
+    await question.fill('Recorded fact');
+    await page.getByRole('button', { name: 'Ask archive', exact: true }).click();
+    await page.getByText('Answer saved as a local draft.', { exact: false }).waitFor();
+    assert.equal(await page.locator('#archive-chat-transcript script').count(), 0);
+    let draft = await worker.evaluate(async () => (await chrome.storage.local.get('archiveChatDraft')).archiveChatDraft);
+    assert.equal(draft.messages.length, 2);
+    assert.equal(draft.sources[0].original_url, 'https://example.test/article');
+    assert.match(draft.sources[0].archive_url, /\/file\/doc\?chunk_id=chunk$/);
+    await page.reload();
+    await page.locator('#archive-chat > summary').click();
+    await page.locator('#archive-chat-transcript').getByText('An answer grounded in evidence [S1].', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Load local models', exact: true }).click();
+    await page.getByText('Choose a model, then ask a question.', { exact: true }).waitFor();
+    await question.fill('Explain that further');
+    await page.getByRole('button', { name: 'Ask archive', exact: true }).click();
+    await page.getByText('Answer saved as a local draft.', { exact: false }).waitFor();
+    assert.equal(requests.filter(r => r.url.endsWith('/chat')).at(-1).body.messages.length, 3);
+    assert.equal(requests.filter(r => r.url.endsWith('/chat')).at(-1).body.sources.length, 1);
+    fail = true;
+    await question.fill('Retry question');
+    await page.getByRole('button', { name: 'Ask archive', exact: true }).click();
+    await page.getByText('Model unavailable', { exact: true }).waitFor();
+    assert.equal(await question.inputValue(), 'Retry question');
+    draft = await worker.evaluate(async () => (await chrome.storage.local.get('archiveChatDraft')).archiveChatDraft);
+    assert.equal(draft.messages.length, 4);
+    fail = false;
+    await page.locator('#archive-chat-search-results > summary').click();
+    await page.getByRole('button', { name: 'Summarize this document', exact: true }).click();
+    await page.getByText('Answer saved as a local draft.', { exact: false }).waitFor();
+    const summary = requests.filter(r => r.url.endsWith('/chat')).at(-1).body;
+    assert.match(summary.messages.at(-1).content, /partial summary/);
+    assert.match(summary.sources.find(source => source.label === "2").coverage, /First 6000 bytes/);
+    const exported = await page.evaluate(() => archiveChatExport());
+    assert.match(exported, /## User/); assert.match(exported, /## Assistant \(test-local\)/);
+    assert.match(exported, /https:\/\/example.test\/article/); assert.match(exported, /Beginning only/);
+    assert.ok(requests.every(r => !/chatgpt|ingest|workspaces/.test(r.url)));
+    await page.evaluate(() => {
+      chrome.permissions.request = async () => true;
+      chrome.runtime.sendMessage = async message => { globalThis.capturedHandoff = message; return { ok: true }; };
+    });
+    await page.getByRole('button', { name: 'Continue in ChatGPT', exact: true }).click();
+    await page.getByText('Conversation and evidence attached in ChatGPT.', { exact: false }).waitFor();
+    const handoff = await page.evaluate(() => globalThis.capturedHandoff);
+    assert.equal(handoff.type, 'handoff'); assert.equal(handoff.filename, 'archive-conversation.md');
+    assert.equal(handoff.content, exported);
+    await page.screenshot({ path: '/private/tmp/archive-chat-preview.png', fullPage: true });
+    await page.getByRole('button', { name: 'Clear search', exact: true }).click();
+    await page.getByText('Search cleared. Conversation and references retained.', { exact: true }).waitFor();
+    assert.equal(await page.locator('#archive-chat-results > div').count(), 0);
+    assert.equal(await page.locator('#archive-chat-transcript article').count(), 6);
+    await question.fill('Recorded fact');
+    await page.getByRole('button', { name: 'Search passages', exact: true }).click();
+    await page.locator('#archive-chat-results button').waitFor();
+    assert.equal(await page.locator('#archive-chat-search-results').getAttribute('open'), '');
+    // A long retained draft must produce bounded input rather than a hard stop.
+    await worker.evaluate(async () => {
+      const { archiveChatDraft: draft } = await chrome.storage.local.get('archiveChatDraft');
+      draft.messages = Array.from({ length: 24 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: 'Earlier exchange '.repeat(100) }));
+      for (let i = 0; i < 25; i++) draft.sources.push({ ...draft.sources[0], key: `older-${i}`, text: 'Earlier evidence '.repeat(65) });
+      await chrome.storage.local.set({ archiveChatDraft: draft });
+    });
+    await page.waitForFunction(() => archiveChat.messages.length === 24);
+    await question.fill('Recorded fact');
+    await page.getByRole('button', { name: 'Ask archive', exact: true }).click();
+    await page.getByText(/older context was omitted/).waitFor();
+    const bounded = requests.filter(r => r.url.endsWith('/chat')).at(-1).body;
+    assert.ok(bounded.messages.length <= 5);
+    assert.ok(bounded.sources.length < 27);
+    const inputBytes = Buffer.byteLength(bounded.messages.map(m => m.content).join('')) + bounded.sources.reduce((sum, source) => sum + Buffer.byteLength(`\n[S${source.label}] ${source.title} (archive ID: ${source.document_id})\n${source.text}\n`), 0);
+    assert.ok(inputBytes <= 10000);
+    assert.equal(bounded.sources[0].label, '1');
+    const retained = await worker.evaluate(async () => (await chrome.storage.local.get('archiveChatDraft')).archiveChatDraft);
+    assert.equal(retained.messages.length, 26);
+    assert.equal(retained.sources.length, 27);
+    assert.match(await page.evaluate(() => archiveChatExport()), /Earlier evidence/);
+    const copyBox = await page.locator('#archive-chat-copy').boundingBox();
+    const handoffBox = await page.locator('#archive-chat-handoff').boundingBox();
+    assert.equal(copyBox.y, handoffBox.y);
+    assert.ok(copyBox.x < handoffBox.x);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.screenshot({ path: '/private/tmp/archive-chat-layout.png', fullPage: true });
+    await question.fill('Unsent question for the pop-out');
+    const poppedPromise = context.waitForEvent('page');
+    await page.getByRole('button', { name: 'Pop out chat', exact: true }).click();
+    const popped = await poppedPromise;
+    await popped.waitForLoadState();
+    await popped.getByRole('button', { name: 'Return to side panel', exact: true }).waitFor();
+    assert.equal(await popped.getByLabel('Question or search terms', { exact: true }).inputValue(), 'Unsent question for the pop-out');
+    assert.equal(await popped.locator('#archive-chat-model').inputValue(), 'test-local');
+    assert.equal(await popped.locator('#archive-chat-transcript article').count(), 26);
+    assert.equal(await popped.locator('#collect').isVisible(), false);
+    await popped.setViewportSize({ width: 640, height: 850 });
+    await popped.screenshot({ path: '/private/tmp/archive-chat-popout.png', fullPage: true });
+    const popupCount = await worker.evaluate(async () => (await chrome.windows.getAll({ windowTypes: ['popup'] })).length);
+    await page.locator('#archive-chat > summary').click();
+    await page.getByRole('button', { name: 'Pop out chat', exact: true }).click();
+    assert.equal(await worker.evaluate(async () => (await chrome.windows.getAll({ windowTypes: ['popup'] })).length), popupCount);
+    const closed = popped.waitForEvent('close');
+    await popped.getByRole('button', { name: 'Return to side panel', exact: true }).click();
+    await closed;
+    await page.waitForFunction(() => document.querySelector('#archive-chat').open);
+    assert.equal(await question.inputValue(), 'Unsent question for the pop-out');
+    assert.equal(await page.locator('#archive-chat-transcript article').count(), 26);
+    // A second panel clearing the shared draft must invalidate an in-flight answer.
+    await page.evaluate(() => {
+      archiveChatRequest = async () => new Promise(resolve => { globalThis.finishDelayedAnswer = resolve; });
+      globalThis.delayedAnswer = archiveChatAnswer('Pending question', []).catch(error => error.message);
+    });
+    await worker.evaluate(() => chrome.storage.local.remove('archiveChatDraft'));
+    await page.waitForFunction(() => archiveChat.messages.length === 0);
+    const stale = await page.evaluate(async () => {
+      globalThis.finishDelayedAnswer({ model: 'test-local', content: 'Stale answer' });
+      return await globalThis.delayedAnswer;
+    });
+    assert.match(stale, /draft changed in another panel/);
+    await page.getByRole('button', { name: 'New chat / clear draft', exact: true }).click();
+    await page.getByText('Draft cleared. Ready for a new chat.', { exact: true }).waitFor();
+    assert.equal(await worker.evaluate(async () => (await chrome.storage.local.get('archiveChatDraft')).archiveChatDraft), undefined);
+  } finally { await context?.close(); await new Promise(resolve => service.close(resolve)); await fs.rm(profile, { recursive: true, force: true }); }
+});

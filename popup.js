@@ -540,3 +540,310 @@ chrome.storage.onChanged.addListener((changes, area) => {
     restoreChatGPTBackup(false).catch(error => { chatGPTBackupStatus.textContent = error.message; });
   }
 });
+
+// A local draft only: never submitted to the archive's ingestion/backup APIs.
+const archiveChatPanel = document.querySelector("#archive-chat");
+const archiveChatStatus = document.querySelector("#archive-chat-status");
+const archiveChatQuestion = document.querySelector("#archive-chat-question");
+const archiveChatModel = document.querySelector("#archive-chat-model");
+let archiveChat = { messages: [], sources: [], model: "" };
+let archiveChatBusy = false;
+let archiveChatReady;
+const archiveChatWindow = new URLSearchParams(location.search).get("archiveChatWindow") === "1";
+const archiveChatDockWindow = Number(new URLSearchParams(location.search).get("dockWindow"));
+if (archiveChatWindow) {
+  document.body.classList.add("archive-chat-window");
+  document.title = "Local archive chat";
+  archiveChatPanel.open = true;
+  document.querySelector("#archive-chat-window").textContent = "Return to side panel";
+}
+
+
+function archiveChatBase() {
+  if (!archiveConnectionPort.reportValidity()) throw new Error("Enter a valid archive connection port.");
+  return `http://127.0.0.1:${archiveConnectionPort.valueAsNumber}`;
+}
+
+async function archiveChatRequest(path, body) {
+  const response = await fetch(`${archiveChatBase()}${path}`, {
+    method: body === undefined ? "GET" : "POST", cache: "no-store",
+    headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    signal: AbortSignal.timeout(125000), targetAddressSpace: "loopback"
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || result.errors?.[0]?.detail || `Service returned ${response.status}`);
+  return result;
+}
+
+function archiveChatRender() {
+  const transcript = document.querySelector("#archive-chat-transcript");
+  const previousCount = transcript.querySelectorAll("article").length;
+  const previousScroll = transcript.scrollTop;
+  const referencesOpen = transcript.querySelector("details")?.open || false;
+  transcript.replaceChildren();
+  for (const message of archiveChat.messages) {
+    const article = document.createElement("article");
+    const label = document.createElement("strong");
+    label.textContent = message.role === "user" ? "You" : `Local assistant (${message.model || archiveChat.model})`;
+    const text = document.createElement("p");
+    text.textContent = message.content;
+    article.append(label, text);
+    transcript.append(article);
+  }
+  if (archiveChat.sources.length) {
+    const list = document.createElement("ul");
+    archiveChat.sources.forEach((source, index) => {
+      const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.textContent = `[S${index + 1}] ${source.title}`;
+      link.href = source.archive_url;
+      link.target = "_blank"; link.rel = "noopener noreferrer";
+      item.append(link); list.append(item);
+    });
+    const references = document.createElement("details");
+    references.open = referencesOpen;
+    const heading = document.createElement("summary");
+    heading.textContent = `References (${archiveChat.sources.length})`;
+    references.append(heading, list);
+    transcript.append(references);
+  }
+  transcript.scrollTop = previousCount === archiveChat.messages.length ? previousScroll : transcript.scrollHeight;
+  for (const control of archiveChatPanel.querySelectorAll("button, textarea, select")) control.disabled = archiveChatBusy;
+}
+
+async function archiveChatSave() {
+  await chrome.storage.local.set({ archiveChatDraft: archiveChat });
+}
+
+function archiveChatExport() {
+  return `# Local archive conversation\n\nLocal model answers are unverified. Source excerpts may be partial.\n\n${archiveChat.messages.map(message => `## ${message.role === "user" ? "User" : `Assistant (${message.model || archiveChat.model})`}\n\n${message.content}`).join("\n\n")}\n\n# References and supplied evidence\n\n${archiveChat.sources.map((source, index) => `## [S${index + 1}] ${source.title}\n\nArchive ID: ${source.document_id}\nLocal archive: ${source.archive_url}\n${source.original_url ? `Original URL: ${source.original_url}\n` : ""}Coverage: ${source.coverage}\n\n${source.text}`).join("\n\n")}\n`;
+}
+
+async function archiveChatSearch(expand = true) {
+  const query = archiveChatQuestion.value.trim();
+  if (!query) throw new Error("Enter a question or search terms.");
+  const result = await archiveChatRequest("/api/v1/archive/search", { query, limit: 5 });
+  const output = document.querySelector("#archive-chat-results");
+  output.replaceChildren();
+  for (const hit of result.results) {
+    const item = document.createElement("div");
+    const link = document.createElement("a");
+    link.textContent = hit.title;
+    link.href = `${archiveChatBase()}${hit.url}`;
+    link.target = "_blank"; link.rel = "noopener noreferrer";
+    const text = document.createElement("p"); text.textContent = String(hit.text || "").slice(0, 500);
+    const summarize = document.createElement("button");
+    summarize.disabled = archiveChatBusy;
+    summarize.type = "button"; summarize.textContent = "Summarize this document";
+    summarize.addEventListener("click", () => archiveChatRun(async () => {
+      const doc = await archiveChatRequest(`/api/v1/documents/${encodeURIComponent(hit.document_id)}?limit=6000`);
+      await archiveChatAnswer(`Summarize ${hit.title}. ${doc.truncated ? "Only the beginning is supplied; label this a partial summary." : ""}`, [{
+        ...hit, text: doc.text, chunk_id: "document-start", url: doc.url,
+        coverage: doc.truncated ? "First 6000 bytes only; document is longer" : "Complete document text at time of retrieval"
+      }]);
+    }));
+    item.append(link, text, summarize); output.append(item);
+  }
+  document.querySelector("#archive-chat-search-results").open = expand;
+  document.querySelector("#archive-chat-results-summary").textContent = `Search results (${result.results.length} passage${result.results.length === 1 ? "" : "s"})`;
+  archiveChatStatus.textContent = `${result.results.length} passages found. Open a result to read it, or choose Summarize this document.`;
+  return result.results;
+}
+
+async function archiveChatAnswer(question, hits) {
+  if (!archiveChatModel.value) throw new Error("Load and choose an installed text-generation model first.");
+  const previous = archiveChat;
+  const originalQuestion = archiveChatQuestion.value;
+  const sources = previous.sources.slice();
+  for (const hit of hits) {
+    // Keep earlier evidence and labels stable across follow-up questions.
+    const key = `${hit.document_id}:${hit.chunk_id}`;
+    if (sources.some(source => source.key === key)) continue;
+    const text = hit.coverage ? hit.text : String(hit.text || "").slice(0, 1200);
+    if (!text) continue;
+    const original = text.match(/^(?:Source(?: URL)?|URL):\s*(https?:\/\/[^\s<>]+)/im);
+    sources.push({ key, document_id: hit.document_id, title: hit.title, text,
+      archive_url: `${archiveChatBase()}${hit.url}`, original_url: original?.[1] || "",
+      coverage: hit.coverage || "Retrieved passage, possibly shortened to 1200 characters" });
+  }
+  archiveChatStatus.textContent = "Generating a local answer…";
+  // Keep the complete draft and evidence for export. Bound only model input.
+  const bytes = text => new TextEncoder().encode(text).length;
+  const messages = [...previous.messages.slice(-4).map(({ role, content }) => ({ role, content })), { role: "user", content: question }];
+  const messageBytes = () => messages.reduce((total, message) => total + bytes(message.content), 0);
+  while (messages.length > 1 && messageBytes() > 3500) messages.splice(0, 2);
+  const preferred = new Set();
+  for (const hit of hits) {
+    const index = sources.findIndex(source => source.key === `${hit.document_id}:${hit.chunk_id}`);
+    if (index >= 0) preferred.add(index);
+  }
+  for (const message of messages) {
+    for (const match of message.content.matchAll(/\[S(\d+)\]/g)) {
+      const index = Number(match[1]) - 1;
+      if (index >= 0 && index < sources.length) preferred.add(index);
+    }
+  }
+  for (let index = sources.length - 1; index >= 0; index--) preferred.add(index);
+  const evidenceBytes = index => bytes(`\n[S${index + 1}] ${sources[index].title} (archive ID: ${sources[index].document_id})\n${sources[index].text}\n`);
+  const first = preferred.values().next().value;
+  while (first !== undefined && messages.length > 1 && messageBytes() + evidenceBytes(first) > 10000) messages.splice(0, 2);
+  let used = messageBytes();
+  const contextSources = [];
+  for (const index of preferred) {
+    const size = evidenceBytes(index);
+    if (contextSources.length < 20 && used + size <= 10000) {
+      contextSources.push({ ...sources[index], label: String(index + 1) });
+      used += size;
+    }
+  }
+  if (used > 10000 || (first !== undefined && !contextSources.length)) throw new Error("The question and selected excerpt are too large together. Shorten the question or start a new chat.");
+  const reduced = messages.length < previous.messages.length + 1 || contextSources.length < sources.length;
+  const answer = await archiveChatRequest("/api/v1/archive/chat", { model: archiveChatModel.value, messages, sources: contextSources });
+  if (archiveChat !== previous) throw new Error("The draft changed in another panel. Review it before asking again.");
+  archiveChat = { model: archiveChatModel.value, sources, messages: [
+    ...archiveChat.messages, { role: "user", content: question },
+    { role: "assistant", model: answer.model, content: answer.content + (answer.truncated ? "\n\n[Answer reached the output limit.]" : "") }
+  ] };
+  await archiveChatSave();
+  if (archiveChatQuestion.value === originalQuestion) {
+    archiveChatQuestion.value = "";
+    await chrome.storage.session.set({ archiveChatQuestion: "" });
+  }
+  archiveChatStatus.textContent = "Answer saved as a local draft. Check its claims against the supplied sources." + (reduced ? ` Using ${Math.floor(messages.length / 2)} recent exchange${messages.length === 3 ? "" : "s"} and ${contextSources.length} of ${sources.length} source excerpts; older context was omitted. The full draft is retained for copying or ChatGPT.` : "");
+}
+
+async function archiveChatRun(action) {
+  if (archiveChatBusy) return;
+  archiveChatBusy = true; archiveChatRender();
+  try { await archiveChatReady; await action(); }
+  catch (error) { archiveChatStatus.textContent = error.message || String(error); }
+  finally { archiveChatBusy = false; archiveChatRender(); }
+}
+
+archiveChatReady = (async () => {
+  const { archiveChatDraft } = await chrome.storage.local.get("archiveChatDraft");
+  if (archiveChatDraft) archiveChat = archiveChatDraft;
+  const composer = await chrome.storage.session.get(["archiveChatQuestion", "archiveChatSelectedModel", "archiveChatDockWindowId"]);
+  archiveChatQuestion.value = composer.archiveChatQuestion || "";
+  const selectedModel = composer.archiveChatSelectedModel || archiveChat.model;
+  if (selectedModel) {
+    archiveChatModel.replaceChildren(new Option(selectedModel, selectedModel));
+    archiveChatStatus.textContent = `Selected model: ${selectedModel}. Ask a question or load models to choose another.`;
+  }
+  if (!archiveChatWindow && composer.archiveChatDockWindowId === (await chrome.windows.getCurrent()).id) archiveChatPanel.open = true;
+
+  archiveChatRender();
+})().catch(error => { archiveChatStatus.textContent = `Could not restore draft: ${error.message}`; });
+
+chrome.storage.onChanged.addListener(async (changes, area) => {
+  if (area === "session") {
+    if (changes.archiveChatQuestion && archiveChatQuestion.value !== (changes.archiveChatQuestion.newValue || "")) archiveChatQuestion.value = changes.archiveChatQuestion.newValue || "";
+    if (changes.archiveChatSelectedModel?.newValue) {
+      const name = changes.archiveChatSelectedModel.newValue;
+      if (![...archiveChatModel.options].some(option => option.value === name)) archiveChatModel.append(new Option(name, name));
+      archiveChatModel.value = name;
+    }
+    if (!archiveChatWindow && changes.archiveChatDockWindowId?.newValue) {
+      try {
+        const current = await chrome.windows.getCurrent();
+        if (current.id === changes.archiveChatDockWindowId.newValue) archiveChatPanel.open = true;
+      } catch (error) { archiveChatStatus.textContent = error.message; }
+    }
+  }
+  if (area === "local" && changes.archiveChatDraft) {
+    archiveChat = changes.archiveChatDraft.newValue || { messages: [], sources: [], model: "" };
+    archiveChatRender();
+  }
+});
+
+archiveChatQuestion.addEventListener("input", async () => {
+  try { await chrome.storage.session.set({ archiveChatQuestion: archiveChatQuestion.value }); }
+  catch (error) { archiveChatStatus.textContent = error.message; }
+});
+archiveChatModel.addEventListener("change", async () => {
+  try { await chrome.storage.session.set({ archiveChatSelectedModel: archiveChatModel.value }); }
+  catch (error) { archiveChatStatus.textContent = error.message; }
+});
+
+document.querySelector("#archive-chat-window").addEventListener("click", () => {
+  // Opening a side panel requires the original click gesture.
+  const docking = archiveChatWindow && Number.isInteger(archiveChatDockWindow) && archiveChatDockWindow > 0
+    ? chrome.sidePanel.open({ windowId: archiveChatDockWindow }) : null;
+  archiveChatRun(async () => {
+    await chrome.storage.session.set({ archiveChatQuestion: archiveChatQuestion.value, archiveChatSelectedModel: archiveChatModel.value });
+    if (archiveChatWindow) {
+      if (!docking) throw new Error("The original browser window is unavailable. Open Website Reader from a browser window; the draft is retained.");
+      await docking;
+      await chrome.windows.update(archiveChatDockWindow, { focused: true });
+      await chrome.storage.session.set({ archiveChatDockWindowId: archiveChatDockWindow });
+      const current = await chrome.windows.getCurrent();
+      await chrome.windows.remove(current.id);
+      return;
+    }
+    if (archiveConnectionPort.checkValidity()) await chrome.storage.local.set({ archiveConnectionPort: archiveConnectionPort.valueAsNumber });
+    await chrome.storage.session.remove("archiveChatDockWindowId");
+    const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["popup"] });
+    const base = chrome.runtime.getURL("popup.html?archiveChatWindow=1");
+    const existing = windows.find(window => window.tabs?.some(tab => tab.url?.startsWith(base + "&")));
+    if (existing) await chrome.windows.update(existing.id, { focused: true });
+    else {
+      const current = await chrome.windows.getCurrent();
+      await chrome.windows.create({ url: `${base}&dockWindow=${current.id}`, type: "popup", width: 640, height: 850, focused: true });
+    }
+    archiveChatPanel.open = false;
+  });
+});
+
+document.querySelector("#archive-chat-models").addEventListener("click", () => archiveChatRun(async () => {
+  const result = await archiveChatRequest("/api/v1/archive/models");
+  archiveChatModel.replaceChildren();
+  for (const name of result.models) {
+    const option = document.createElement("option"); option.value = name; option.textContent = name;
+    archiveChatModel.append(option);
+  }
+  if (result.models.includes(archiveChat.model)) archiveChatModel.value = archiveChat.model;
+  archiveChatStatus.textContent = result.models.length ? "Choose a model, then ask a question." : "No text-generation model is installed in the project Ollama service. Install one, then load models again.";
+}));
+document.querySelector("#archive-chat-search").addEventListener("click", () => archiveChatRun(() => archiveChatSearch()));
+document.querySelector("#archive-chat-form").addEventListener("submit", event => {
+  event.preventDefault();
+  archiveChatRun(async () => {
+    const question = archiveChatQuestion.value.trim();
+    await archiveChatAnswer(question, await archiveChatSearch(false));
+  });
+});
+document.querySelector("#archive-chat-clear-search").addEventListener("click", () => archiveChatRun(async () => {
+  document.querySelector("#archive-chat-results").replaceChildren();
+  document.querySelector("#archive-chat-results-summary").textContent = "Search results";
+  document.querySelector("#archive-chat-search-results").open = false;
+  archiveChatQuestion.value = "";
+  await chrome.storage.session.set({ archiveChatQuestion: "" });
+  archiveChatStatus.textContent = "Search cleared. Conversation and references retained.";
+}));
+document.querySelector("#archive-chat-clear").addEventListener("click", () => archiveChatRun(async () => {
+  archiveChat = { messages: [], sources: [], model: archiveChatModel.value };
+  await chrome.storage.local.remove("archiveChatDraft");
+  archiveChatQuestion.value = "";
+  await chrome.storage.session.set({ archiveChatQuestion: "" });
+  document.querySelector("#archive-chat-results").replaceChildren();
+  document.querySelector("#archive-chat-results-summary").textContent = "Search results";
+  document.querySelector("#archive-chat-search-results").open = false;
+  archiveChatStatus.textContent = "Draft cleared. Ready for a new chat.";
+}));
+document.querySelector("#archive-chat-copy").addEventListener("click", () => archiveChatRun(async () => {
+  if (!archiveChat.messages.length) throw new Error("Start a conversation first.");
+  await navigator.clipboard.writeText(archiveChatExport());
+  archiveChatStatus.textContent = "Copied the conversation and source excerpts.";
+}));
+document.querySelector("#archive-chat-handoff").addEventListener("click", () => {
+  // Request access directly in the click gesture, before any storage/network await.
+  const permission = chrome.permissions.request({ origins: ["https://chatgpt.com/*"] });
+  archiveChatRun(async () => {
+    if (!archiveChat.messages.length) throw new Error("Start a conversation first.");
+    if (!await permission) throw new Error("ChatGPT site access was declined. Use Copy chat and references instead.");
+    const result = await chrome.runtime.sendMessage({ type: "handoff", filename: "archive-conversation.md", content: archiveChatExport() });
+    if (!result?.ok) throw new Error(result?.error || "ChatGPT handoff failed. Use Copy chat and references instead.");
+    archiveChatStatus.textContent = "Conversation and evidence attached in ChatGPT. Add your next question and send when ready.";
+  });
+});
