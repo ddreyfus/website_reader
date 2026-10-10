@@ -83,7 +83,7 @@ func RegisterChatGPTHandlers(router *gin.Engine, db *sqlx.DB, root string) error
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, gin.H{"conversations": rows, "root": root, "coverage": "conversation JSON pages; alternate branches and attachment files are not verified", "inventory_complete": inventory["complete"] == true})
+		c.JSON(200, gin.H{"conversations": rows, "root": root, "coverage": "conversation JSON pages; alternate branches and attachment files are not verified", "inventory_complete": inventory["complete"] == true, "inventory_completed_at": inventory["completedAt"]})
 	})
 	group.GET("/checkpoint", func(c *gin.Context) {
 		var value json.RawMessage
@@ -96,7 +96,26 @@ func RegisterChatGPTHandlers(router *gin.Engine, db *sqlx.DB, root string) error
 		if err == nil {
 			value = json.RawMessage(raw)
 		}
-		c.JSON(200, gin.H{"checkpoint": value})
+		projects := map[string]string{}
+		rows, err := db.Queryx(`SELECT id,title FROM chatgpt_projects WHERE scope=?`, c.Query("scope"))
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, title string
+			if err := rows.Scan(&id, &title); err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+			projects[id] = title
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"checkpoint": value, "projects": projects})
 	})
 	group.POST("/:action", func(c *gin.Context) {
 		if strings.Split(c.GetHeader("Content-Type"), ";")[0] != "application/json" {
@@ -105,15 +124,16 @@ func RegisterChatGPTHandlers(router *gin.Engine, db *sqlx.DB, root string) error
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<20)
 		var input struct {
-			Scope         string          `json:"scope"`
-			ID            string          `json:"id"`
-			Lease         string          `json:"lease"`
-			Generation    int64           `json:"generation"`
-			Error         string          `json:"error"`
-			RetrySeconds  int64           `json:"retry_seconds"`
-			Cursor        string          `json:"cursor"`
-			Page          json.RawMessage `json:"page"`
-			Checkpoint    json.RawMessage `json:"checkpoint"`
+			Projects      map[string]string `json:"projects"`
+			Scope         string            `json:"scope"`
+			ID            string            `json:"id"`
+			Lease         string            `json:"lease"`
+			Generation    int64             `json:"generation"`
+			Error         string            `json:"error"`
+			RetrySeconds  int64             `json:"retry_seconds"`
+			Cursor        string            `json:"cursor"`
+			Page          json.RawMessage   `json:"page"`
+			Checkpoint    json.RawMessage   `json:"checkpoint"`
 			Conversations []struct {
 				ID           string `json:"id"`
 				Title        string `json:"title"`
@@ -146,6 +166,16 @@ func RegisterChatGPTHandlers(router *gin.Engine, db *sqlx.DB, root string) error
 		case "event":
 			log.Printf("chatgpt_backup progress scope=%q message=%q", input.Scope, input.Error[:min(len(input.Error), 1024)])
 		case "discover":
+			for id, title := range input.Projects {
+				if !strings.HasPrefix(id, "g-p-") || !chatGPTID.MatchString(id) || len(title) > 2048 {
+					c.JSON(400, gin.H{"error": "invalid project identity or title"})
+					return
+				}
+				if _, err = tx.Exec(`INSERT INTO chatgpt_projects(scope,id,title) VALUES(?,?,?) ON CONFLICT(scope,id) DO UPDATE SET title=excluded.title`, input.Scope, id, title); err != nil {
+					fail(err)
+					return
+				}
+			}
 			if len(input.Conversations) > 1000 {
 				c.JSON(400, gin.H{"error": "at most 1000 conversations per batch"})
 				return
@@ -183,16 +213,6 @@ remote_updated_at=CASE WHEN excluded.remote_updated_at='' THEN remote_updated_at
 			// rather than invalidating every snapshot on each five-minute scan.
 			_, err = tx.Exec(`UPDATE chatgpt_conversations SET generation=generation+1,retry_at=0 WHERE scope=? AND saved_generation=generation AND saved_at<=? AND remote_updated_at=''`, input.Scope, now-86400)
 		case "claim":
-			var checkpointRaw string
-			var checkpoint map[string]interface{}
-			if err := tx.Get(&checkpointRaw, `SELECT value FROM chatgpt_checkpoints WHERE scope=? AND key='inventory'`, input.Scope); err != nil {
-				c.JSON(409, gin.H{"error": "Inventory must finish before conversation downloads"})
-				return
-			}
-			if json.Unmarshal([]byte(checkpointRaw), &checkpoint) != nil || checkpoint["complete"] != true {
-				c.JSON(409, gin.H{"error": "Inventory must finish before conversation downloads"})
-				return
-			}
 			token := make([]byte, 24)
 			if _, err = rand.Read(token); err != nil {
 				fail(err)
@@ -200,7 +220,7 @@ remote_updated_at=CASE WHEN excluded.remote_updated_at='' THEN remote_updated_at
 			}
 			lease := hex.EncodeToString(token)
 			row := map[string]interface{}{}
-			result := tx.QueryRowx(`UPDATE chatgpt_conversations SET lease=?,lease_until=?,leased_generation=generation WHERE rowid=(SELECT rowid FROM chatgpt_conversations WHERE scope=? AND generation>saved_generation AND retry_at<=? AND lease_until<=? ORDER BY saved_at,id LIMIT 1) RETURNING id,title,project_id,url,generation`, lease, now+120, input.Scope, now, now)
+			result := tx.QueryRowx(`UPDATE chatgpt_conversations SET lease=?,lease_until=?,leased_generation=generation WHERE rowid=(SELECT rowid FROM chatgpt_conversations WHERE scope=? AND generation>saved_generation AND retry_at<=? AND lease_until<=? ORDER BY retry_at,saved_at,id LIMIT 1) RETURNING id,title,project_id,url,generation`, lease, now+120, input.Scope, now, now)
 			if err = result.MapScan(row); err == sql.ErrNoRows {
 				c.JSON(200, gin.H{"job": nil})
 				return

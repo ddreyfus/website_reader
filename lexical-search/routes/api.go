@@ -272,6 +272,10 @@ func (api *Api) Search(c *gin.Context) {
 		log.Println("Opening index file:", wsr.BleveDir)
 		index, err := bleve.Open(wsr.BleveDir)
 		if err != nil {
+			// Bleve can return an open index alongside a mapping validation error.
+			if index != nil {
+				index.Close()
+			}
 			if errors.Is(err, bleve.ErrorIndexPathDoesNotExist) {
 				ErrorHandler(c, err, http.StatusNotFound)
 			} else {

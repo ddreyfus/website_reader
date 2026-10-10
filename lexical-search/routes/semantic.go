@@ -142,6 +142,10 @@ func backfillEmbeddings(ctx context.Context, workspace archive.WorkspaceRecord, 
 		defer mutex.Unlock()
 		index, err := bleve.Open(workspace.BleveDir)
 		if err != nil {
+			// Bleve can return an open index alongside a mapping validation error.
+			if index != nil {
+				index.Close()
+			}
 			return nil, err
 		}
 		defer index.Close()
@@ -200,6 +204,10 @@ func backfillEmbeddings(ctx context.Context, workspace archive.WorkspaceRecord, 
 	defer mutex.Unlock()
 	index, err := bleve.Open(workspace.BleveDir)
 	if err != nil {
+		// Bleve can return an open index alongside a mapping validation error.
+		if index != nil {
+			index.Close()
+		}
 		return err
 	}
 	defer index.Close()

@@ -61,6 +61,28 @@ func TestChatGPTQueueAndSnapshots(t *testing.T) {
 	if rows != 1 || projects != 1 {
 		t.Fatal(rows, projects)
 	}
+	// Project-only discovery persists empty projects and exposes scoped names.
+	call("discover", map[string]interface{}{"scope": "account-a", "projects": map[string]string{"g-p-empty": "Empty"}}, 200)
+	for _, scope := range []string{"account-a", "account-b"} {
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, httptest.NewRequest("GET", "/api/v1/chatgpt/checkpoint?scope="+scope, nil))
+		if res.Code != 200 {
+			t.Fatal(res.Code, res.Body.String())
+		}
+		var result struct {
+			Projects map[string]string `json:"projects"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if scope == "account-a" {
+			if result.Projects["g-p-empty"] != "Empty" || result.Projects["g-p-project"] != "Project" {
+				t.Fatal(result.Projects)
+			}
+		} else if len(result.Projects) != 0 {
+			t.Fatal("project names leaked across scopes", result.Projects)
+		}
+	}
 	claim := call("claim", map[string]interface{}{"scope": "account-a"}, 200)["job"].(map[string]interface{})
 	if call("claim", map[string]interface{}{"scope": "account-a"}, 200)["job"] != nil {
 		t.Fatal("duplicate claim")
@@ -175,14 +197,23 @@ func TestChatGPTQueueAndSnapshots(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatal("write escaped root")
 	}
+	// A failed low-ID job must not starve untouched conversations.
+	call("discover", map[string]interface{}{"scope": "fair", "checkpoint": map[string]interface{}{"complete": true}, "conversations": []map[string]interface{}{{"id": "a", "title": "Retry"}, {"id": "b", "title": "Untouched"}}}, 200)
+	failedJob := call("claim", map[string]interface{}{"scope": "fair"}, 200)["job"].(map[string]interface{})
+	failedJob["scope"] = "fair"
+	failedJob["error"] = "temporary failure"
+	call("fail", failedJob, 200)
+	db.Exec("UPDATE chatgpt_conversations SET retry_at=1 WHERE scope='fair' AND id='a'")
+	call("discover", map[string]interface{}{"scope": "fair", "checkpoint": map[string]interface{}{"complete": false, "completedAt": 1}}, 200)
+	if next := call("claim", map[string]interface{}{"scope": "fair"}, 200)["job"].(map[string]interface{}); next["id"] != "b" {
+		t.Fatal("retry starved untouched job", next)
+	}
 	// Structured pages survive worker interruption; completion requires the whole
 	// cursor chain and preserves API order across pages.
 	pagedEntry := map[string]interface{}{"id": "paged-chat", "title": "Paged", "updated_at": "2026-10-09T18:00:00Z"}
 	pagedDiscovery := map[string]interface{}{"scope": "paged", "conversations": []interface{}{pagedEntry}, "checkpoint": map[string]interface{}{"complete": false}}
 	call("discover", pagedDiscovery, 200)
-	call("claim", map[string]interface{}{"scope": "paged"}, 409)
-	pagedDiscovery["checkpoint"] = map[string]interface{}{"complete": true}
-	call("discover", pagedDiscovery, 200)
+	// Discovered rows can be claimed before the first inventory finishes.
 	pagedJob := call("claim", map[string]interface{}{"scope": "paged"}, 200)["job"].(map[string]interface{})
 	pagedJob["scope"] = "paged"
 	makePage := func(id, role, text string, more bool) map[string]interface{} {
@@ -190,6 +221,7 @@ func TestChatGPTQueueAndSnapshots(t *testing.T) {
 	}
 	pagedJob["cursor"] = ""
 	pagedJob["page"] = makePage("newer", "assistant", "Newer answer", true)
+	pagedJob["page"].(map[string]interface{})["messages"].([]interface{})[0].(map[string]interface{})["status"] = "in_progress"
 	call("page", pagedJob, 200)
 	call("page", pagedJob, 200)
 	if call("verify", pagedJob, 200)["matches"] != true {
@@ -219,6 +251,9 @@ func TestChatGPTQueueAndSnapshots(t *testing.T) {
 	transcript, err := os.ReadFile(filepath.Join(root, "paged", "conversations", "paged-chat", "conversation.md"))
 	if err != nil || strings.Index(string(transcript), "Older question") < 0 || strings.Index(string(transcript), "Older question") > strings.Index(string(transcript), "Newer answer") {
 		t.Fatal(string(transcript), err)
+	}
+	if !strings.Contains(string(transcript), "Source message status: in_progress") {
+		t.Fatal("unfinished source status was lost", string(transcript))
 	}
 	call("discover", pagedDiscovery, 200)
 	if call("claim", map[string]interface{}{"scope": "paged"}, 200)["job"] != nil {

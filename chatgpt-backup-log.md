@@ -239,3 +239,10 @@ Do not equate visible sidebar discovery with a complete or current backup.
 - Follow-up: workspace verification incorrectly rejected an authenticated personal account whose `account_id` is null. Accept that explicit personal-account response without a workspace header; continue rejecting missing entries or workspace accounts without IDs. Added personal/null, valid workspace, and missing-workspace adapter regressions, with credential-free failure diagnostics. Reloaded the extension. The full extension regression suite passed all 56 tests before this small adapter follow-up.
 - Live follow-up showed the selected cookie did not match an account-map key. Added quoted-string decoding, matching by explicit account ID, and the personal selector alias to an explicitly personal `default` entry; unknown selectors still pause. Added regressions for each supported selector. Credentials and account IDs remain excluded from diagnostics.
 - Live verification at 14:58 EDT: workspace resolution succeeded and the projects list finished (two entries in this response). The subsequent conversation list returned HTTP 429; the shared cooldown retained the inventory checkpoint and blocked premature conversation claims. Added the retry delay to future rate-limit diagnostics.
+
+## October 10, 2026 — Recent/archived inventory and cached project names
+
+- Removed per-project conversation listing. Recent/archived rows supply project membership.
+- Reuse scoped project names from SQLite; paginate project metadata on an unknown project ID, at most once per scan. Persist project-only batches, including empty projects.
+- Discard legacy per-project conversation cursors while preserving recent/archived continuation and watermark state.
+- Live UI/list_threads tests supported the coverage assumption; raw Recents endpoint equivalence remains unverified because direct browser navigation was blocked.

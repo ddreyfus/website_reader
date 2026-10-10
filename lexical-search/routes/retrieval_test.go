@@ -14,8 +14,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blevesearch/bleve/v2"
 	"github.com/gin-gonic/gin"
 	"lexical-search/config"
+	"lexical-search/server"
 )
 
 func TestArchiveRetrieval(t *testing.T) {
@@ -215,4 +217,66 @@ func mustWorkspaces(t *testing.T) []archive.WorkspaceRecord {
 	}
 	unlock()
 	return workspaces
+}
+
+// A mapping validation error returns a live Bleve handle. Repeated requests
+// must report the error rather than block forever on the leaked file lock.
+func TestArchiveSearchClosesInvalidMapping(t *testing.T) {
+	oldDir, oldDB, oldRoots := config.LexDir, config.WorkspacesDBPath, config.IndexDirectories
+	config.LexDir = filepath.Join(t.TempDir(), "indexes")
+	config.WorkspacesDBPath = filepath.Join(config.LexDir, "workspaces.sqlite")
+	root := t.TempDir()
+	config.IndexDirectories = []string{root}
+	t.Cleanup(func() { config.LexDir, config.WorkspacesDBPath, config.IndexDirectories = oldDir, oldDB, oldRoots })
+	if err := os.WriteFile(filepath.Join(root, "article.txt"), []byte("needle evidence"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	reconcileDirectories(context.Background(), config.IndexDirectories)
+	workspaces, err := archive.GetWorkspaces(server.ListWorkspacesParams{})
+	if err != nil || len(workspaces) != 1 {
+		t.Fatalf("workspaces=%v err=%v", workspaces, err)
+	}
+	index, err := bleve.Open(workspaces[0].BleveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(index.Mapping())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mapping map[string]interface{}
+	if err := json.Unmarshal(data, &mapping); err != nil {
+		t.Fatal(err)
+	}
+	mapping["default_mapping"] = map[string]interface{}{"enabled": true, "properties": map[string]interface{}{"broken": map[string]interface{}{"enabled": true, "fields": []interface{}{map[string]interface{}{"name": "broken", "type": "invalid-test-field"}}}}}
+	data, err = json.Marshal(mapping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanced, err := index.Advanced()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := advanced.SetInternal([]byte("_mapping"), data); err != nil {
+		t.Fatal(err)
+	}
+	if err := index.Close(); err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	RegisterRetrievalHandlers(router)
+	for i := 0; i < 2; i++ {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest("POST", "/api/v1/archive/search", strings.NewReader(`{"query":"needle"}`)))
+		if response.Code != 500 || !strings.Contains(response.Body.String(), "unknown field type") {
+			t.Fatalf("request %d: %d %s", i, response.Code, response.Body.String())
+		}
+	}
+	// Indexing uses the same error path and must release its handle too.
+	reconcileDirectories(context.Background(), config.IndexDirectories)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest("POST", "/api/v1/archive/search", strings.NewReader(`{"query":"needle"}`)))
+	if response.Code != 500 {
+		t.Fatalf("after indexing: %d", response.Code)
+	}
 }

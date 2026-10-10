@@ -206,15 +206,15 @@ service. Pause retains saved files, partial pages, and queued work.
 
 One inactive owned tab runs two sequential activities:
 
-1. **Inventory:** enumerate projects, recent/archived conversation lists, and
-   each project's conversations. Commit each batch and its continuation together
-   in SQLite. Downloads cannot start until every list finishes. Interrupted scans
-   resume their saved cursor. After a full baseline, each list can stop at its
-   previous update-time watermark only when its full baseline and current pages
-   have descending timestamps; pinned entries do not establish the stopping
-   boundary. A two-minute overlap covers ties. Daily reconciliation and explicit
-   Sync force full traversal. Recheck each list's first page before declaring it
-   finished; if it changed during enumeration, restart that list.
+1. **Inventory:** enumerate recent and archived conversation lists. Reuse the
+   scoped projects table for names; refresh project metadata only when a listed
+   conversation references an unknown project ID. Do not enumerate each project's
+   conversations. Commit each batch and its continuation together in SQLite.
+   Interrupted scans resume their saved cursor, and discovered conversations
+   remain eligible for download while inventory is incomplete. After a full
+   baseline, each list can stop at its previous update-time watermark only when
+   its baseline and current pages have descending timestamps; pinned entries do
+   not establish the stopping boundary. A two-minute overlap covers ties.
 2. **Conversation download:** claim one conversation, save each JSON page before
    requesting its older-page cursor, and assemble only after the complete cursor
    chain exists. Batches stop after ten pages and release the lease without a

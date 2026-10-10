@@ -290,6 +290,10 @@ func searchArchive(c *gin.Context) {
 		}
 		index, err := bleve.Open(workspace.BleveDir)
 		if err != nil {
+			// Bleve can return an open index alongside a mapping validation error.
+			if index != nil {
+				index.Close()
+			}
 			fail(c, err, 500)
 			return
 		}
@@ -477,6 +481,10 @@ func readDocument(c *gin.Context) {
 		}
 		index, err := bleve.Open(workspace.BleveDir)
 		if err != nil {
+			// Bleve can return an open index alongside a mapping validation error.
+			if index != nil {
+				index.Close()
+			}
 			ErrorHandler(c, err, 500)
 			return
 		}

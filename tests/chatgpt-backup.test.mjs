@@ -38,11 +38,97 @@ test('inventory establishes a full baseline before stopping on old update-ordere
   assert.equal(checkpoint.complete, true);
   assert.equal(checkpoint.lists.find(x => x.id === 'recent').baseline, true);
   assert.ok(calls.some(x => x[1] === 'recent' && x[2] === '1'));
+  // Even an old baseline (or a legacy forced-full flag) must stay incremental.
+  checkpoint.fullAt = now - 2 * 86400000;
+  checkpoint.full = true;
   incremental = true; calls.length = 0;
   assert.equal(await context.chatGPTInventory(20, 'scope', checkpoint), true);
-  assert.equal(calls.filter(x => x[1] === 'recent').length, 2); // page plus head revalidation
+  assert.equal(calls.filter(x => x[1] === 'recent').length, 1);
   assert.ok(calls.filter(x => x[1] === 'recent').every(x => x[2] === ''));
   assert.ok(commits.at(-1).checkpoint.completedAt);
+});
+
+test('inventory refreshes unknown projects once, persists names, and drops legacy project scans', async () => {
+  const calls = [];
+  const { context, commits } = inventoryContext(async (tab, identity, kind, id, cursor) => {
+    calls.push([kind, id, cursor]);
+    if (kind === 'identity') return { identity: 'user:personal' };
+    if (kind === 'projects') return { data: cursor === ''
+      ? { items: [{ gizmo: { gizmo: { id: 'g-p-known', display: { name: 'Known' } } } }], cursor: 'next' }
+      : { items: [{ gizmo: { gizmo: { id: 'g-p-new', display: { name: 'New' } } } }], cursor: null } };
+    return { data: { items: id === 'recent' ? [
+      { ...entry('chat', 100), gizmo_id: 'g-p-new' },
+      { ...entry('missing', 99), gizmo_id: 'g-p-missing' }
+    ] : [], offset: 0, total: id === 'recent' ? 2 : 0 } };
+  });
+  const checkpoint = { identity: 'user:personal', complete: false, lists: [
+    { id: 'recent', title: 'recent', cursor: '', done: false },
+    { id: 'archived', title: 'archived', cursor: '', done: false },
+    { id: 'g-p-legacy', title: 'Legacy', cursor: 'old', done: false }
+  ] };
+  const projects = { 'g-p-known': 'Known', 'g-p-new': '' };
+  assert.equal(await context.chatGPTInventory(20, 'scope', checkpoint, projects), true);
+  assert.equal(calls.filter(x => x[0] === 'projects').length, 2);
+  assert.ok(!calls.some(x => x[1] === 'g-p-legacy'));
+  assert.equal(commits.find(x => x.projects?.['g-p-new']).projects['g-p-new'], 'New');
+  assert.equal(commits.flatMap(x => x.conversations).find(x => x.id === 'chat').project_title, 'New');
+  calls.length = 0;
+  // Once all referenced IDs are known, the next sync needs no project listing.
+  projects['g-p-missing'] = 'Missing';
+  assert.equal(await context.chatGPTInventory(20, 'scope', commits.at(-1).checkpoint, projects), true);
+  assert.ok(!calls.some(x => x[0] === 'projects'));
+});
+
+test('project metadata refresh resumes after interruption before committing its conversation page', async () => {
+  let interrupted = true;
+  const calls = [];
+  const { context, commits } = inventoryContext(async (tab, identity, kind, id, cursor) => {
+    calls.push([kind, id, cursor]);
+    if (kind === 'identity') return { identity: 'user:personal' };
+    if (kind === 'projects') {
+      if (cursor === 'next' && interrupted) throw new Error('interrupted');
+      return { data: cursor === '' ? { items: [{ gizmo: { gizmo: { id: 'g-p-other', display: { name: 'Other' } } } }], cursor: 'next' } : {
+        items: [{ gizmo: { gizmo: { id: 'g-p-new', display: { name: 'New' } } } }], cursor: null
+      } };
+    }
+    return { data: { items: id === 'recent' ? [{ ...entry('chat', 100), gizmo_id: 'g-p-new' }] : [], offset: 0, total: id === 'recent' ? 1 : 0 } };
+  });
+  await assert.rejects(context.chatGPTInventory(20, 'scope', null), /interrupted/);
+  const saved = commits.at(-1);
+  assert.equal(saved.checkpoint.lists.find(x => x.id === 'projects').cursor, 'next');
+  assert.ok(!commits.some(x => x.conversations.length));
+  interrupted = false; calls.length = 0;
+  assert.equal(await context.chatGPTInventory(20, 'scope', saved.checkpoint, saved.projects), true);
+  assert.deepEqual(calls.filter(x => x[0] === 'projects'), [['projects', 'projects', 'next']]);
+  assert.equal(commits.flatMap(x => x.conversations).find(x => x.id === 'chat').project_title, 'New');
+});
+
+test('inventory preserves its scan-start cutoff across retries and includes boundary timestamps', async () => {
+  const startedAt = 1000000;
+  let fail = true;
+  const calls = [];
+  const { context, commits } = inventoryContext(async (tab, identity, kind, id, cursor) => {
+    if (kind === 'identity') return { identity: 'user:personal' };
+    calls.push(cursor);
+    if (cursor === '2' && fail) throw new Error('interrupted');
+    const items = cursor === ''
+      ? [entry('changed-during-scan', 1100), entry('equal-boundary', 880)]
+      : [entry('older', 879)];
+    return { data: { items, total: 100, offset: Number(cursor) } };
+  });
+  const checkpoint = { identity: 'user:personal', complete: true, lists: [
+    { id: 'recent', title: 'Recent', done: true, baseline: true, orderVerified: true, watermark: startedAt }
+  ] };
+  context.Date = class extends Date { static now() { return startedAt; } };
+  await assert.rejects(context.chatGPTInventory(20, 'scope', checkpoint), /interrupted/);
+  const resumed = commits.at(-1).checkpoint;
+  assert.equal(resumed.startedAt, startedAt);
+  assert.equal(resumed.lists[0].watermark, startedAt);
+  fail = false;
+  context.Date = class extends Date { static now() { return startedAt + 500000; } };
+  assert.equal(await context.chatGPTInventory(20, 'scope', resumed), true);
+  assert.deepEqual(calls, ['', '2', '2']);
+  assert.equal(commits.at(-1).checkpoint.lists[0].watermark, startedAt);
 });
 
 test('interrupted inventory resumes its committed cursor and unordered pages disable early stopping', async () => {
@@ -61,7 +147,7 @@ test('interrupted inventory resumes its committed cursor and unordered pages dis
   assert.equal(resumed.lists[0].cursor, '1');
   fail = false; calls.length = 0;
   assert.equal(await context.chatGPTInventory(20, 'scope', resumed), true);
-  assert.deepEqual(calls, ['1', '']); // cursor resume, then head revalidation
+  assert.deepEqual(calls, ['1']); // Resume without re-reading the first page.
   assert.equal(commits.at(-1).checkpoint.lists[0].orderVerified, false);
 });
 
@@ -78,6 +164,7 @@ test('structured adapter keeps credentials page-local and respects access/rate f
   vm.runInContext(source, context);
   const result = await context.chatGPTRead('conversation', 'chat', 'older');
   assert.equal(result.identity, 'user:personal');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.requests)), [['authentication', 200], ['download', 200]]);
   assert.equal(calls[1][1].headers.Authorization, 'Bearer private-token');
   assert.match(calls[1][0], /messages\?before=older/);
   assert.doesNotMatch(JSON.stringify(result), /private-token/);
@@ -88,6 +175,7 @@ test('structured adapter keeps credentials page-local and respects access/rate f
   context.document.cookie = '_account=personal';
   assert.equal((await context.chatGPTRead('identity')).identity, 'user:personal');
   context.document.cookie = '_account=default';
+  delete context[Symbol.for('website-reader.chatgpt-backup.session')];
   account = { structure: 'workspace', account_id: null };
   assert.match((await context.chatGPTRead('identity')).error, /matching entry: true; type: workspace/);
   account = { structure: 'workspace', account_id: 'team' };
@@ -96,17 +184,111 @@ test('structured adapter keeps credentials page-local and respects access/rate f
   assert.equal((await context.chatGPTRead('identity')).identity, 'user:team');
   context.document.cookie = '_account=missing';
   assert.match((await context.chatGPTRead('identity')).error, /matching entry: false/);
+  delete context[Symbol.for('website-reader.chatgpt-backup.session')];
   context.fetch = async () => ({ ok: false, status: 429, headers: { get: () => '120' } });
   const limited = await context.chatGPTRead('identity');
   assert.equal(limited.status, 429);
+  assert.deepEqual(JSON.parse(JSON.stringify(limited.requests)), [['authentication', 429]]);
   assert.equal(limited.retrySeconds, 120);
   assert.doesNotMatch(JSON.stringify(limited), /private-token/);
 });
 
-test('worker resumes saved conversation pages on its owned tab, one conversation at a time', async () => {
+test('page-local authentication is reused across pages and refreshed after expiry or access rejection', async () => {
+  const calls = [];
+  let reject = false, now = Date.now();
+  const context = vm.createContext({
+    URL, AbortSignal, Date: class extends Date { static now() { return now; } },
+    location: { origin: 'https://chatgpt.com' }, document: { cookie: '_account=team' },
+    chrome: { tabs: { onUpdated: events }, alarms: { onAlarm: events } },
+    async fetch(path, options) {
+      calls.push([path, options.headers]);
+      if (path === '/api/auth/session') return { ok: true, async json() { return { accessToken: 'private-token', user: { id: 'user' } }; } };
+      if (path.includes('/accounts/check/')) return { ok: true, async json() { return { accounts: { team: { account: { account_id: 'team', structure: 'workspace' } } } }; } };
+      if (reject) { reject = false; return { ok: false, status: 401, headers: { get() { return null; } } }; }
+      return { ok: true, async json() { return {}; } };
+    }
+  });
+  vm.runInContext(source, context);
+  await context.chatGPTRead('identity');
+  const first = await context.chatGPTRead('list', 'recent', '0');
+  await context.chatGPTRead('list', 'recent', '50');
+  await context.chatGPTRead('conversation', 'chat', '', 'g-p-project');
+  await context.chatGPTRead('list', 'archived');
+  assert.equal(calls.filter(([path]) => path === '/api/auth/session').length, 1);
+  assert.equal(calls.filter(([path]) => path.includes('/accounts/check/')).length, 1);
+  assert.equal(calls.at(-1)[1]['Chatgpt-Account-Id'], 'team');
+  assert.equal(calls.at(-1)[1]['Chatgpt-Project-Id'], undefined);
+  assert.doesNotMatch(JSON.stringify(first), /private-token/);
+  now += 300001;
+  await context.chatGPTRead('list', 'recent');
+  assert.equal(calls.filter(([path]) => path === '/api/auth/session').length, 2);
+  reject = true;
+  assert.equal((await context.chatGPTRead('list', 'recent')).status, 401);
+  await context.chatGPTRead('list', 'recent');
+  assert.equal(calls.filter(([path]) => path === '/api/auth/session').length, 3);
+  context.document.cookie = '';
+  assert.equal((await context.chatGPTRead('identity')).identity, 'user:personal');
+  assert.equal(calls.filter(([path]) => path === '/api/auth/session').length, 4);
+});
+
+test('HTTP diagnostics retain request context and safe error fields with bounded body reads', async () => {
+  let response;
+  const context = vm.createContext({
+    URL, AbortSignal, TextDecoder, location: { origin: 'https://chatgpt.com' }, document: { cookie: '' },
+    chrome: { tabs: { onUpdated: events }, alarms: { onAlarm: events } },
+    async fetch(path) {
+      return path === '/api/auth/session'
+        ? { ok: true, async json() { return { accessToken: 'private-token', user: { id: 'user' } }; } }
+        : response;
+    }
+  });
+  vm.runInContext(source, context);
+  response = new Response(JSON.stringify({
+    error: { code: 'rate_limit_exceeded', type: 'throttle', message: 'Wait. Bearer private-token access_token=secret person@example.com' },
+    accessToken: 'session-secret', messages: [{ content: 'private conversation text' }]
+  }), { status: 429, headers: { 'Retry-After': '120', 'Content-Type': 'application/json', 'x-request-id': 'req-123', 'cf-ray': 'ray-456', 'Set-Cookie': 'secret-cookie' } });
+  const result = await context.chatGPTRead('list', 'recent', '50');
+  assert.equal(result.status, 429);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.requests)), [['authentication', 200], ['inventory', 429]]);
+  assert.equal(result.retrySeconds, 120);
+  assert.match(result.error, /Endpoint: \/backend-api\/conversations; list=recent; offset=50/);
+  assert.match(result.error, /x-request-id=req-123/);
+  assert.match(result.error, /cf-ray=ray-456/);
+  assert.match(result.error, /rate_limit_exceeded; throttle/);
+  assert.doesNotMatch(JSON.stringify(result), /private-token|session-secret|secret-cookie|=secret|person@example|private conversation/);
+  let cancelled = false;
+  response = new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('<html>' + 'private content'.repeat(1000))); },
+    cancel() { cancelled = true; }
+  }), { status: 429 });
+  const html = await context.chatGPTRead('list', 'archived');
+  assert.ok(cancelled);
+  assert.match(html.error, /body omitted/);
+  assert.doesNotMatch(html.error, /private content/);
+  assert.ok(html.error.length < 1024);
+  response = new Response('{}', { status: 503, headers: { 'Retry-After': new Date(Date.now() + 180000).toUTCString() } });
+  const dated = await context.chatGPTRead('list', 'recent');
+  assert.ok(dated.retrySeconds >= 179 && dated.retrySeconds <= 180);
+});
+
+test('request diagnostics separate inventory, downloads and authentication before reporting errors', async () => {
+  const logs = [];
+  const context = vm.createContext({ chrome: {
+    tabs: { onUpdated: events }, alarms: { onAlarm: events },
+    scripting: { async executeScript() { return [{ result: { error: 'throttled', status: 429, requests: [['authentication', 200], ['inventory', 429]] } }]; } }
+  } });
+  vm.runInContext(source, context);
+  context.chatGPTBackupProgress = async message => logs.push(message);
+  await assert.rejects(context.chatGPTReadPage(20, '', 'list', 'recent'), /throttled/);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /inventory=1 · download=0 · authentication=1/);
+  assert.match(logs[0], /outcomes=authentication:200, inventory:429/);
+});
+
+test('worker resumes pages and immediately downloads the next conversation on the same tab', async () => {
   const local = { chatGPTBackupEnabled: true, chatGPTBackupScope: 'scope' }, session = {}, actions = [], reads = [];
-  let downloaded = false, claims = 0;
-  const context = vm.createContext({ URL, AbortSignal, setTimeout: fn => fn(), navigator: { locks: { async request(name, options, fn) { await fn({}); } } }, chrome: {
+  let downloaded = false, claims = 0, locked = false;
+  const context = vm.createContext({ URL, AbortSignal, setTimeout: fn => fn(), navigator: { locks: { async request(name, options, fn) { assert.equal(name, "chatgpt-backup"); assert.equal(options.ifAvailable, true); if (locked) return fn(null); locked = true; try { await fn({}); } finally { locked = false; } } } }, chrome: {
     tabs: { onUpdated: events, async query() { return [{ id: 10, url: 'https://chatgpt.com/' }]; }, async create(options) { assert.equal(options.active, false); return { id: 20 }; }, async get() { return { status: 'complete', url: 'https://chatgpt.com/' }; }, async remove() {} },
     alarms: { onAlarm: events }, permissions: { async contains() { return true; } },
     storage: { local: { async get() { return local; }, async set(data) { Object.assign(local, data); } }, session: { async get() { return session; }, async set(data) { Object.assign(session, data); }, async remove(key) { delete session[key]; } } }
@@ -117,23 +299,73 @@ test('worker resumes saved conversation pages on its owned tab, one conversation
   context.chatGPTArchive = async (action, body) => {
     actions.push(action);
     if (action.startsWith('checkpoint?')) return { checkpoint: { identity: 'user:personal', complete: true } };
-    if (action === 'claim') { claims++; return { job: { id: 'chat', title: 'Chat', generation: 1, lease: 'lease' } }; }
+    if (action === 'claim') { if (claims === 2) return { job: null }; claims++; downloaded = false; return { job: { id: `chat-${claims}`, title: 'Chat', generation: 1, lease: 'lease' } }; }
     if (action === 'pages') return { cursor: 'older', pages: downloaded ? 2 : 1, complete: downloaded };
     if (action === 'verify') return { matches: true };
     if (action === 'page') { assert.equal(body.cursor, 'older'); downloaded = true; }
     return {};
   };
   await context.chatGPTBackupRun();
-  assert.equal(claims, 1);
-  assert.deepEqual(reads, [['identity', ''], ['conversation', ''], ['conversation', 'older']]);
+  assert.equal(claims, 2);
+  assert.deepEqual(reads, [['identity', ''], ['conversation', ''], ['conversation', 'older'], ['conversation', ''], ['conversation', 'older']]);
   assert.ok(actions.includes('complete'));
   assert.ok(local.chatGPTBackupSavedAt);
   assert.equal(session.chatGPTBackupTabId, undefined);
-  // Incomplete inventory blocks all download claims, even with old preview rows.
+  // Inventory throttling during the initial scan does not block queue claims.
+  let refreshClaims = 0;
+  context.chatGPTInventory = async () => { throw Object.assign(new Error('Inventory throttled'), { status: 429, retrySeconds: 120 }); };
+  context.chatGPTArchive = async action => {
+    if (action.startsWith('checkpoint?')) return { checkpoint: { identity: 'user:personal', complete: false, completedAt: 0 } };
+    if (action === 'claim') { refreshClaims++; return { job: null }; }
+    return {};
+  };
+  await context.chatGPTBackupRun();
+  assert.equal(refreshClaims, 1);
+  assert.ok(local.chatGPTInventoryRetryAt > Date.now());
+  assert.equal(local.chatGPTBackupRetryAt, undefined);
+  await context.chatGPTBackupRun(); // Refresh cooldown still allows the queue.
+  assert.equal(refreshClaims, 2);
+  // Other inventory failures also leave downloads eligible.
+  delete local.chatGPTInventoryRetryAt;
+  context.chatGPTInventory = async () => { throw new Error('Inventory network failure'); };
+  await context.chatGPTBackupRun();
+  assert.equal(refreshClaims, 3);
+  assert.equal(local.chatGPTBackupRetryAt, undefined);
+  // Download cooldown does not block inventory; a second worker cannot overlap it.
+  delete local.chatGPTInventoryRetryAt;
+  local.chatGPTBackupRetryAt = Date.now() + 120000;
+  let inventoryRuns = 0, finishInventory;
+  context.chatGPTInventory = async () => { inventoryRuns++; await new Promise(resolve => { finishInventory = resolve; }); return true; };
+  const running = context.chatGPTBackupRun();
+  while (!finishInventory) await new Promise(resolve => setImmediate(resolve));
+  await context.chatGPTBackupRun();
+  assert.equal(inventoryRuns, 1);
+  assert.equal(refreshClaims, 3);
+  finishInventory();
+  await running;
+  assert.equal(refreshClaims, 3);
+  delete local.chatGPTBackupRetryAt;
+  // A rate limit stops the batch immediately, rather than claiming another job.
+  let limitedClaims = 0;
+  context.chatGPTArchive = async action => {
+    if (action.startsWith('checkpoint?')) return { checkpoint: { identity: 'user:personal', complete: true } };
+    if (action === 'claim') { limitedClaims++; return { job: { id: 'limited', generation: 1, lease: 'lease' } }; }
+    if (action === 'pages') return { pages: 0, cursor: '', complete: false };
+    return {};
+  };
+  context.chatGPTReadPage = async (tab, identity, kind) => {
+    if (kind === 'identity') return { identity: 'user:personal' };
+    throw Object.assign(new Error('Too many requests'), { status: 429, retrySeconds: 120 });
+  };
+  await context.chatGPTBackupRun();
+  assert.equal(limitedClaims, 1);
+  assert.ok(local.chatGPTBackupRetryAt > Date.now());
+  delete local.chatGPTBackupRetryAt;
+  // Without an authenticated checkpoint, old preview rows cannot be claimed.
   context.chatGPTArchive = async action => { if (action.startsWith('checkpoint?')) return { checkpoint: null }; if (action === 'claim') throw new Error('must not claim'); return {}; };
   context.chatGPTInventory = async () => false;
   await context.chatGPTBackupRun();
-  assert.equal(claims, 1);
+  assert.equal(claims, 2);
 });
 
 test('backup summary distinguishes durable backups from mutually exclusive queue states', async () => {
@@ -153,7 +385,7 @@ test('backup summary distinguishes durable backups from mutually exclusive queue
   assert.match(summary, /5 known · 2 have backups · 3 have no backup/);
   assert.match(summary, /1 first backups · 1 refreshes · 1 fetching · 1 awaiting retry/);
   assert.match(summary, /Retry: No supported messages/);
-  assert.match(summary, /Inventory: incomplete; downloads wait/);
+  assert.match(summary, /Inventory: incomplete; discovered conversations can download/);
 });
 
 test('automatic discovery persists requests, coalesces navigation, and ignores owned tabs and pause', async () => {

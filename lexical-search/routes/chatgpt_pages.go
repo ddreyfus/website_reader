@@ -139,9 +139,6 @@ func chatGPTAssemblePages(tx *sqlx.Tx, scope, id string, generation int64) (json
 			}
 			seen[key] = string(canonical)
 			status, _ := message["status"].(string)
-			if status == "in_progress" || status == "streaming" {
-				return nil, fmt.Errorf("conversation is still generating")
-			}
 			author, _ := message["author"].(map[string]interface{})
 			role, _ := author["role"].(string)
 			if role != "user" && role != "assistant" {
@@ -170,6 +167,9 @@ func chatGPTAssemblePages(tx *sqlx.Tx, scope, id string, generation int64) (json
 			}
 			if strings.TrimSpace(text) == "" {
 				text = "[Content retained in source JSON; readable rendering unavailable.]"
+			}
+			if status == "in_progress" || status == "streaming" {
+				text = "[Source message status: " + status + "; text may be unfinished.]\n\n" + text
 			}
 			messages = append(messages, map[string]interface{}{"key": key, "role": role, "text": text})
 		}

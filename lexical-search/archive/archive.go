@@ -497,6 +497,10 @@ func ArchiveUpdateEventGenerator(ctx context.Context, wsr *WorkspaceRecord, even
 
 	index, err := bleve.Open(wsr.BleveDir)
 	if err != nil {
+		// Bleve can return an open index alongside a mapping validation error.
+		if index != nil {
+			index.Close()
+		}
 		fail(err)
 		return
 	}
@@ -622,6 +626,11 @@ func ArchiveUpdateEventGenerator(ctx context.Context, wsr *WorkspaceRecord, even
 					}
 					index, openErr = bleve.Open(wsr.BleveDir)
 					if openErr != nil {
+						// Bleve can return an open index alongside a mapping validation error.
+						if index != nil {
+							index.Close()
+						}
+						index = nil
 						fail(openErr)
 						return
 					}
