@@ -2,7 +2,7 @@
 
 UI cleanup: the ChatGPT action names the file it will attach and whether it is a chosen file or the latest completed collection. Refresh the panel screenshots before submission.
 
-Last updated: 2026-10-09. Local development draft; no submission requested.
+Last updated: 2026-10-11. Local development draft; no submission requested.
 
 Free Press digests collect only Free Press articles. External email links and externally redirected sources are excluded from article extraction.
 
@@ -16,7 +16,7 @@ Name: Website Reader
 
 Short description: Collect publication issues or a Gmail newsletter and its linked articles into Markdown.
 
-Detailed description: Save a publication issue or an expanded Gmail newsletter with its linked articles as one reading document. Preserve email commentary, article links, and source information, with newsletter filenames based on the sending domain. Copy a digest prompt or attach a completed batch or chosen Markdown/text file to a new ChatGPT draft. Missing articles are logged so collection can finish. Article access depends on your existing subscriptions and the site's availability.
+Detailed description: Save a publication issue or an expanded Gmail newsletter with its linked articles as one reading document. Preserve email commentary, article links, and source information, with newsletter filenames based on the sending domain. Copy a digest prompt or attach a completed batch or chosen Markdown/text file to a new ChatGPT draft. Import an unzipped ChatGPT export into your local conversation archive, including alternate branches. Missing articles are logged so collection can finish. Article access depends on your existing subscriptions and the site's availability.
 
 Category: Productivity. Primary language: English.
 
@@ -56,6 +56,11 @@ Data is not sold, used for unrelated purposes, or used for lending decisions. Us
 
 ## Privacy policy
 
+The collapsed **Import from export** control reads conversation JSON from a folder
+selected by the user and sends it only to the local archive service. It preserves
+exported branches. Images and attachment files are skipped. The selected folder
+is not added to indexed directories. Refresh panel screenshots for these controls.
+
 The README's Local data and permissions section describes current behavior. A public privacy policy URL and contact details must be supplied before any store submission.
 
 ## Distribution and developer information
@@ -66,6 +71,7 @@ Local unpacked installation only. Publisher, public contact, support URL, distri
 
 | Version | Date | Changes | Status |
 |---|---|---|---|
+| 0.1.0 | 2026-10-11 | Separate backup and export import into collapsed sections, with folder selection, processing progress, and retryable local imports. Move backup pacing and retry controls into Local archive settings. | Local draft |
 | 0.1.0 | 2026-10-09 | ChatGPT structured-page backup preview with resumable local inventory and background queue. Inventory finishes before sequential conversation downloads. Verified update ordering enables incremental early stopping after a full baseline; full reconciliation runs daily. Shows backup coverage separately from queued work and retry reasons. Failed conversations do not stop other backups. Incomplete coverage is disclosed. | Local draft |
 | 0.1.0 | 2026-10-08 | Explicit next ChatGPT file and source; accurate file-clearing control and current-page status. | Local draft |
 | 0.1.0 | 2026-10-06 | Digest archive comparisons use a bounded NEW/ADDS/REPEAT familiarity test. | Local draft |

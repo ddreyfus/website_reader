@@ -1,5 +1,11 @@
 # Import a ChatGPT export
 
+In the extension panel, expand **Import from export**, enter your existing
+account/workspace label, select the unzipped export folder, and click **Process**. Keep the panel open until processing finishes.
+The folder is read only as import input; it is not added to indexed directories.
+If interrupted, selecting the folder and processing again safely resumes by
+rechecking already imported conversations.
+
 Build/restart the local archive service after installing this change. Then run:
 
 ```sh
@@ -14,7 +20,8 @@ configured local service port; `--port` overrides it. It supports both
 Each conversation updates the existing SQLite backup row and its stable archive
 directory under `~/sources/ChatGPT/<scope>/conversations/<id>/`. Existing project
 assignments are preserved. A busy browser backup is skipped and reported; rerun
-after it finishes. Repeated imports are safe, and unchanged files are not rewritten.
+after it finishes. Repeated imports are idempotent: unchanged files, database
+timestamps, generations, and pending refreshes remain unchanged.
 
 `conversation.md` contains the selected branch. `branches.md` contains alternate
 user/assistant messages once each, with message and parent IDs. `export.json`

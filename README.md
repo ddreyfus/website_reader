@@ -225,7 +225,7 @@ One inactive owned tab runs two sequential activities:
    its first page. Changed first pages or rejected continuation cursors start a
    new generation without overwriting the last good backup.
 
-ChatGPT backup settings provide a minimum request interval (default 2 seconds)
+Local archive settings include ChatGPT backup controls for a minimum request interval (default 2 seconds)
 and maximum retry backoff (default 15 minutes). Request starts are paced across
 inventory, authentication, and message pages; response/loading time counts toward
 the interval. Any HTTP 429 pauses both inventory and downloads using a persisted

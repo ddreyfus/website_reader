@@ -60,6 +60,17 @@ func TestChatGPTImportBranchesAndFreshness(t *testing.T) {
 	if err := db.Get(&pending, `SELECT generation-saved_generation FROM chatgpt_conversations WHERE scope='pending'`); err != nil || pending != 1 {
 		t.Fatal("newer download no longer pending", pending, err)
 	}
+	// Use an earlier timestamp so a same-second rewrite cannot pass unnoticed.
+	if _, err := db.Exec(`UPDATE chatgpt_conversations SET saved_at=1 WHERE scope='pending'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chatGPTImport(db, root, "pending", raw, false); err != nil {
+		t.Fatal(err)
+	}
+	var savedAt int64
+	if err := db.Get(&savedAt, `SELECT saved_at FROM chatgpt_conversations WHERE scope='pending'`); err != nil || savedAt != 1 {
+		t.Fatal("repeat fallback changed timestamp", savedAt, err)
+	}
 	dir := filepath.Join(root, "personal", "conversations", "chat")
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatal("dry run wrote archive")
@@ -86,7 +97,33 @@ func TestChatGPTImportBranchesAndFreshness(t *testing.T) {
 		t.Fatal("alternate branch not searchable", res.Body.String())
 	}
 	info, _ := os.Stat(filepath.Join(dir, "conversation.md"))
+	if _, err := db.Exec(`UPDATE chatgpt_conversations SET saved_at=1 WHERE scope='personal'`); err != nil {
+		t.Fatal(err)
+	}
+	row := func() string {
+		t.Helper()
+		values := map[string]interface{}{}
+		if err := db.QueryRowx(`SELECT * FROM chatgpt_conversations WHERE scope='personal'`).MapScan(values); err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(encoded)
+	}
+	beforeRow := row()
+	exportInfo, _ := os.Stat(filepath.Join(dir, "export.json"))
+	branchInfo, _ := os.Stat(filepath.Join(dir, "branches.md"))
 	call(raw, false, "unchanged")
+	if row() != beforeRow {
+		t.Fatal("repeat import changed database row")
+	}
+	exportAfter, _ := os.Stat(filepath.Join(dir, "export.json"))
+	branchAfter, _ := os.Stat(filepath.Join(dir, "branches.md"))
+	if !exportInfo.ModTime().Equal(exportAfter.ModTime()) || !branchInfo.ModTime().Equal(branchAfter.ModTime()) {
+		t.Fatal("repeat import rewrote export or branches")
+	}
 	after, _ := os.Stat(filepath.Join(dir, "conversation.md"))
 	if !info.ModTime().Equal(after.ModTime()) {
 		t.Fatal("unchanged transcript rewritten")

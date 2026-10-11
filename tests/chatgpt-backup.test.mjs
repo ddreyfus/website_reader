@@ -560,6 +560,47 @@ test('backup preview controls load in the real extension panel', async () => {
     assert.equal(await scopeInput.evaluate(e => e.validity.patternMismatch), true);
     await scopeInput.fill('personal');
     assert.equal(await page.getByRole('button', { name: 'Sync conversations', exact: true }).isVisible(), true);
+    assert.equal(await page.locator('#chatgpt-export-import').evaluate(e => e.open), false);
+    assert.equal(await page.locator('#chatgpt-backup #chatgpt-export-import').count(), 0);
+    await page.getByText('Import from export', { exact: true }).click();
+    await page.getByLabel('Import account and workspace label', { exact: true }).fill('personal');
+    await page.locator('#archive-settings > summary').click();
+    assert.equal(await page.locator('#archive-settings #chatgpt-rate-settings').count(), 1);
+    const process = page.getByRole('button', { name: 'Process', exact: true });
+    assert.equal(await process.isDisabled(), true);
+    const folder = path.join(profile, 'export-fixture');
+    await fs.mkdir(folder);
+    const conversation = id => ({ id, mapping: { alternate: { parent: 'root', message: { content: { parts: ['Branch text'] } } } } });
+    await fs.writeFile(path.join(folder, 'export_manifest.json'), JSON.stringify({ logical_files: { 'conversations.json': { files: ['conversations-000.json', 'conversations-001.json'] } } }));
+    await fs.writeFile(path.join(folder, 'conversations-000.json'), JSON.stringify([conversation('first')]));
+    await fs.writeFile(path.join(folder, 'conversations-001.json'), JSON.stringify([conversation('second')]));
+    await fs.writeFile(path.join(folder, 'image.dat'), 'ignored image');
+    const imports = [];
+    let failSecond = true;
+    await page.route('http://127.0.0.1:8766/api/v1/chatgpt/import', async route => {
+      const body = route.request().postDataJSON();
+      imports.push(body);
+      await route.fulfill({ status: failSecond && body.conversation.id === 'second' ? 503 : 200,
+        contentType: 'application/json', body: JSON.stringify(failSecond && body.conversation.id === 'second' ? { error: 'Temporary failure' } : { result: 'imported' }) });
+    });
+    await page.getByLabel('Unzipped export folder', { exact: true }).setInputFiles(folder);
+    await process.click();
+    await page.getByText(/Import stopped after 1 conversations: Temporary failure/).waitFor();
+    assert.equal(await process.isEnabled(), true);
+    assert.deepEqual(imports.map(x => x.conversation.id), ['first', 'second']);
+    assert.ok(imports.every(x => x.scope === 'personal' && x.conversation.mapping.alternate));
+    failSecond = false;
+    await process.click();
+    await page.getByText('Processed 2 conversations for personal. 2 imported.', { exact: true }).waitFor();
+    await page.screenshot({ path: '/private/tmp/chatgpt-export-import.png', fullPage: true });
+    const invalidFolder = path.join(profile, 'invalid-export');
+    await fs.mkdir(invalidFolder);
+    await fs.writeFile(path.join(invalidFolder, 'conversations.json'), JSON.stringify([conversation('duplicate'), conversation('duplicate')]));
+    await page.getByLabel('Unzipped export folder', { exact: true }).setInputFiles(invalidFolder);
+    await process.click();
+    await page.getByText(/missing or duplicate conversation ID/).waitFor();
+    assert.equal(imports.length, 4); // Preflight rejects duplicates before any writes.
+    await page.getByText('Import from export', { exact: true }).click();
     assert.equal(await page.getByLabel('Minimum request interval (seconds)', { exact: true }).inputValue(), '2');
     assert.equal(await page.getByLabel('Maximum retry backoff (minutes)', { exact: true }).inputValue(), '15');
     await page.getByLabel('Minimum request interval (seconds)', { exact: true }).fill('0');
@@ -586,6 +627,7 @@ test('backup preview controls load in the real extension panel', async () => {
     await page.reload();
     await page.locator('#chatgpt-backup > summary').click();
     await page.getByText(/12 known · 8 have backups · 4 have no backup/).waitFor();
+    await page.locator('#archive-settings > summary').click();
     assert.equal(await page.getByLabel('Minimum request interval (seconds)', { exact: true }).inputValue(), '3');
     assert.equal(await page.getByLabel('Maximum retry backoff (minutes)', { exact: true }).inputValue(), '10');
     await page.getByText('Backup diagnostic log (last 200 events)', { exact: true }).click();

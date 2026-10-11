@@ -505,6 +505,60 @@ loadState();
 
 const chatGPTBackupScope = document.querySelector("#chatgpt-backup-scope");
 const chatGPTBackupStatus = document.querySelector("#chatgpt-backup-status");
+const chatGPTExportScope = document.querySelector("#chatgpt-export-scope");
+const chatGPTExportFolder = document.querySelector("#chatgpt-export-folder");
+const chatGPTExportProcess = document.querySelector("#chatgpt-export-process");
+const chatGPTExportStatus = document.querySelector("#chatgpt-export-status");
+chatGPTExportFolder.addEventListener("change", () => {
+  chatGPTExportProcess.disabled = !chatGPTExportFolder.files.length;
+  chatGPTExportStatus.textContent = chatGPTExportFolder.files.length ? "Folder selected. Select Process to import." : "";
+});
+chatGPTExportProcess.addEventListener("click", async () => {
+  if (!chatGPTExportScope.reportValidity() || !archiveConnectionPort.reportValidity()) return;
+  const scope = chatGPTExportScope.value;
+  const counts = {};
+  let processed = 0;
+  chatGPTExportProcess.disabled = chatGPTExportFolder.disabled = chatGPTExportScope.disabled = true;
+  try {
+    chatGPTExportStatus.textContent = "Checking export files…";
+    const files = new Map(Array.from(chatGPTExportFolder.files, file => [file.webkitRelativePath.split("/").slice(1).join("/"), file]));
+    let names;
+    if (files.has("export_manifest.json")) {
+      const manifest = JSON.parse(await files.get("export_manifest.json").text());
+      names = manifest.logical_files?.["conversations.json"]?.files;
+    } else {
+      names = files.has("conversations.json") ? ["conversations.json"] : [...files.keys()].filter(name => /^conversations-\d+\.json$/.test(name)).sort();
+    }
+    if (!Array.isArray(names) || !names.length || new Set(names).size !== names.length || names.some(name => !files.has(name))) {
+      throw new Error("Select the folder containing all conversation JSON files from the unzipped export.");
+    }
+    const seen = new Set();
+    for (const name of names) {
+      const conversations = JSON.parse(await files.get(name).text());
+      if (!Array.isArray(conversations)) throw new Error(`${name}: expected a conversation list.`);
+      for (const conversation of conversations) {
+        const id = conversation?.id || conversation?.conversation_id;
+        if (!id || seen.has(id)) throw new Error(`${name}: missing or duplicate conversation ID.`);
+        seen.add(id);
+      }
+    }
+    if (!seen.size) throw new Error("No conversations found in this export.");
+    for (const name of names) {
+      for (const conversation of JSON.parse(await files.get(name).text())) {
+        const { result } = await archiveChatRequest("/api/v1/chatgpt/import", { scope, conversation });
+        counts[result] = (counts[result] || 0) + 1;
+        processed++;
+        chatGPTExportStatus.textContent = `Processed ${processed} of ${seen.size} conversations for ${scope}.`;
+      }
+    }
+    chatGPTExportStatus.textContent = `Processed ${processed} conversations for ${scope}. ${Object.entries(counts).map(([result, count]) => `${count} ${result.replaceAll("-", " ")}`).join("; ")}.${counts.busy ? " Some conversations are being backed up; process again when those jobs finish." : ""}`;
+  } catch (error) {
+    chatGPTExportStatus.textContent = `Import stopped after ${processed} conversations: ${error.message || String(error)}. Select Process to retry.`;
+  } finally {
+    chatGPTExportProcess.disabled = !chatGPTExportFolder.files.length;
+    chatGPTExportFolder.disabled = chatGPTExportScope.disabled = false;
+  }
+});
 const chatGPTRequestInterval = document.querySelector("#chatgpt-request-interval");
 const chatGPTMaxBackoff = document.querySelector("#chatgpt-max-backoff");
 document.querySelector("#chatgpt-rate-settings").addEventListener("submit", async event => {
@@ -524,7 +578,10 @@ document.querySelector("#chatgpt-backup-download-log").addEventListener("click",
 async function restoreChatGPTBackup(restoreScope = true) {
   const saved = await chrome.storage.local.get(["chatGPTBackupScope", "chatGPTBackupProgress", "chatGPTBackupSummary", "chatGPTBackupUpdatedAt", "chatGPTBackupSavedAt", "chatGPTBackupLog", "chatGPTRequestInterval", "chatGPTMaxBackoffMinutes", "chatGPTBackupRetryAt", "chatGPTBackupEnabled"]);
   if (restoreScope) {
-    if (saved.chatGPTBackupScope) chatGPTBackupScope.value = saved.chatGPTBackupScope;
+    if (saved.chatGPTBackupScope) {
+      chatGPTBackupScope.value = saved.chatGPTBackupScope;
+      chatGPTExportScope.value = saved.chatGPTBackupScope;
+    }
     chatGPTRequestInterval.value = saved.chatGPTRequestInterval ?? 2;
     chatGPTMaxBackoff.value = saved.chatGPTMaxBackoffMinutes ?? 15;
   }

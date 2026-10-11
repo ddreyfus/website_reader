@@ -72,15 +72,6 @@
         <label for="chatgpt-backup-scope">Account and workspace label</label>
         <input id="chatgpt-backup-scope" type="text" pattern="[A-Za-z0-9_\-]{1,128}" maxlength="128" placeholder="personal" required aria-describedby="chatgpt-backup-help">
         <p id="chatgpt-backup-help">Use a different label for each account/workspace and verify you are signed in to that account. Uses the local archive connection port. Add ~/sources/ChatGPT to directories to index for search and RAG.</p>
-        <form id="chatgpt-rate-settings">
-          <label for="chatgpt-request-interval">Minimum request interval (seconds)</label>
-          <input id="chatgpt-request-interval" name="request-interval" type="number" min="0.5" max="30" step="0.5" value="2" required aria-describedby="chatgpt-rate-help">
-          <label for="chatgpt-max-backoff">Maximum retry backoff (minutes)</label>
-          <input id="chatgpt-max-backoff" name="max-backoff" type="number" min="1" max="60" step="1" value="15" required aria-describedby="chatgpt-rate-help">
-          <p id="chatgpt-rate-help">Applies to all backup requests. Repeated rate limits increase the wait. ChatGPT's Retry-After is always honored, even when longer than this maximum. Saving or Sync will not shorten an active cooldown.</p>
-          <button type="submit">Save backup settings</button>
-          <p id="chatgpt-rate-settings-status" role="status"></p>
-        </form>
         <p id="chatgpt-backup-cooldown" role="status"></p>
         <button id="chatgpt-backup-sync" type="button">Sync conversations</button>
         <button id="chatgpt-backup-pause" type="button">Pause backup</button>
@@ -88,6 +79,18 @@
         <p id="chatgpt-backup-status" role="status" aria-atomic="true">Select Sync conversations once to enable automatic backup on ChatGPT. Rechecks every five minutes while ChatGPT is open. Pause disables automatic backup. Work continues when you switch tabs or close this panel.</p>
         <p id="chatgpt-backup-updated"></p>
         <details><summary>Backup diagnostic log (last 200 events)</summary><button id="chatgpt-backup-download-log" type="button">Download backup log</button><pre id="chatgpt-backup-log"></pre></details>
+      </details>
+
+      <details id="chatgpt-export-import">
+        <summary>Import from export</summary>
+        <p>Select your unzipped ChatGPT export folder. Conversation text and branches are copied into the existing ChatGPT archive for the account label below. Images and attachments are skipped.</p>
+        <label for="chatgpt-export-scope">Import account and workspace label</label>
+        <input id="chatgpt-export-scope" type="text" pattern="[A-Za-z0-9_\-]{1,128}" maxlength="128" placeholder="personal" required>
+        <label for="chatgpt-export-folder">Unzipped export folder</label>
+        <input id="chatgpt-export-folder" type="file" webkitdirectory aria-describedby="chatgpt-export-help">
+        <p id="chatgpt-export-help">Keep this panel open while processing. If interrupted, select the folder and process again; previously imported content is preserved.</p>
+        <button id="chatgpt-export-process" type="button" disabled>Process</button>
+        <p id="chatgpt-export-status" role="status" aria-atomic="true"></p>
       </details>
 
       <details id="archive-settings">
@@ -112,6 +115,18 @@
           </fieldset>
         </form>
         <p id="archive-config-status" role="status" aria-atomic="true">Start the local archive service, then load its settings.</p>
+        <form id="chatgpt-rate-settings">
+          <fieldset>
+            <legend>ChatGPT backup</legend>
+            <label for="chatgpt-request-interval">Minimum request interval (seconds)</label>
+            <input id="chatgpt-request-interval" name="request-interval" type="number" min="0.5" max="30" step="0.5" value="2" required aria-describedby="chatgpt-rate-help">
+            <label for="chatgpt-max-backoff">Maximum retry backoff (minutes)</label>
+            <input id="chatgpt-max-backoff" name="max-backoff" type="number" min="1" max="60" step="1" value="15" required aria-describedby="chatgpt-rate-help">
+            <p id="chatgpt-rate-help">Applies to all backup requests. Repeated rate limits increase the wait. ChatGPT's Retry-After is always honored, even when longer than this maximum. Saving or Sync will not shorten an active cooldown.</p>
+            <button type="submit">Save backup settings</button>
+            <p id="chatgpt-rate-settings-status" role="status"></p>
+          </fieldset>
+        </form>
       </details>
 
       <details>
