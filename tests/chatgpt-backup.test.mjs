@@ -271,10 +271,121 @@ test('HTTP diagnostics retain request context and safe error fields with bounded
   assert.ok(dated.retrySeconds >= 179 && dated.retrySeconds <= 180);
 });
 
+test('pacing spaces actual requests, counts loading time, and includes authentication', async () => {
+  let now = 10000;
+  const starts = [], waits = [];
+  const context = vm.createContext({ URL, AbortSignal,
+    Date: class extends Date { static now() { return now; } },
+    setTimeout(fn, ms) { waits.push(ms); now += ms; fn(); },
+    location: { origin: 'https://chatgpt.com' }, document: { cookie: '_account=default' },
+    chrome: { tabs: { onUpdated: events }, alarms: { onAlarm: events } },
+    async fetch(path) {
+      starts.push(now); now += path === '/api/auth/session' ? 3000 : 500;
+      return { ok: true, async json() { return path === '/api/auth/session'
+        ? { accessToken: 'token', user: { id: 'user' } }
+        : path.includes('/accounts/check/') ? { accounts: { default: { account: { structure: 'personal' } } } } : { items: [] }; } };
+    }
+  });
+  vm.runInContext(source, context);
+  const first = await context.chatGPTRead('list', 'recent', '', '', 2000, 9000);
+  assert.deepEqual(starts, [11000, 14000, 16000]);
+  assert.deepEqual(waits, [1000, 1500]); // The slow first response already exceeds the interval.
+  assert.equal(first.lastRequestAt, 16000);
+  const second = await context.chatGPTRead('conversation', 'chat', '', '', 2000, first.lastRequestAt);
+  assert.equal(starts.at(-1), 18000);
+  assert.equal(second.lastRequestAt, 18000);
+});
+
+test('persisted request spacing and cooldown survive worker recreation', async () => {
+  let now = 1000000;
+  const local = { chatGPTRequestInterval: 3, chatGPTLastRequestAt: now - 1000 };
+  const args = [];
+  const makeContext = () => {
+    const context = vm.createContext({ Date: class extends Date { static now() { return now; } }, chrome: {
+      tabs: { onUpdated: events }, alarms: { onAlarm: events },
+      storage: { local: { async get() { return { ...local }; }, async set(value) { Object.assign(local, value); } } },
+      scripting: { async executeScript(options) {
+        args.push(options.args);
+        assert.equal(local.chatGPTLastRequestAt, now + 2000); // Reserved before injection.
+        return [{ result: { identity: 'user:personal', lastRequestAt: now + 2000 } }];
+      } }
+    } });
+    vm.runInContext(source, context);
+    context.chatGPTBackupProgress = async () => {};
+    return context;
+  };
+  await makeContext().chatGPTReadPage(20, '', 'conversation', 'chat');
+  assert.equal(args[0][4], 3000);
+  assert.equal(args[0][5], now - 1000);
+  assert.equal(local.chatGPTLastRequestAt, now + 2000);
+  local.chatGPTBackupRetryAt = now + 60000;
+  await assert.rejects(makeContext().chatGPTReadPage(20, '', 'list', 'recent'), /cooldown/);
+  assert.equal(args.length, 1);
+});
+
+test('backoff recovery requires successful backend reads beyond the cooldown, not time spent waiting', async () => {
+  let now = 1000000;
+  const local = { chatGPTRateLimitCount: 4, chatGPTBackupRetryAt: now - 1000 };
+  let requests = [['download', 200]];
+  const context = vm.createContext({ Date: class extends Date { static now() { return now; } }, chrome: {
+    tabs: { onUpdated: events }, alarms: { onAlarm: events },
+    storage: { local: { async get() { return { ...local }; }, async set(value) { Object.assign(local, value); } } },
+    scripting: { async executeScript() { return [{ result: { identity: 'user:personal', requests } }]; } }
+  } });
+  vm.runInContext(source, context);
+  context.chatGPTBackupProgress = async () => {};
+  await context.chatGPTReadPage(20, '', 'conversation', 'chat');
+  assert.equal(local.chatGPTRateLimitCount, 4);
+  now += 300000; requests = [];
+  await context.chatGPTReadPage(20, '', 'identity');
+  assert.equal(local.chatGPTRateLimitCount, 4);
+  requests = [['inventory', 200]];
+  await context.chatGPTReadPage(20, '', 'list', 'recent');
+  assert.equal(local.chatGPTRateLimitCount, 0);
+});
+
+test('Sync and account-label changes retain the shared cooldown', async () => {
+  const local = { chatGPTBackupEnabled: false, chatGPTBackupScope: 'old', chatGPTBackupRetryAt: Date.now() + 120000, chatGPTRateLimitCount: 3 };
+  const until = local.chatGPTBackupRetryAt;
+  const context = vm.createContext({ chrome: {
+    runtime: { getURL: path => `chrome-extension://test/${path}` },
+    tabs: { onUpdated: events }, alarms: { onAlarm: events, async create() {} },
+    storage: { local: { async get() { return { ...local }; }, async set(value) { Object.assign(local, value); } } }
+  } });
+  vm.runInContext(source, context);
+  context.chatGPTBackupRun = async () => {};
+  const response = await new Promise(resolve => context.handleChatGPTBackup({ action: 'sync', scope: 'new' }, { url: 'chrome-extension://test/popup.html' }, resolve));
+  assert.equal(response.ok, true);
+  assert.equal(local.chatGPTBackupScope, 'new');
+  assert.equal(local.chatGPTBackupRetryAt, until);
+  assert.equal(local.chatGPTRateLimitCount, 3);
+});
+
+test('backoff grows across rate limits, caps client delay, and honors longer Retry-After', async () => {
+  const local = { chatGPTMaxBackoffMinutes: 3 };
+  const context = vm.createContext({ Math: Object.assign(Object.create(Math), { random: () => 0 }), chrome: {
+    tabs: { onUpdated: events }, alarms: { onAlarm: events },
+    storage: { local: { async get() { return { ...local }; }, async set(value) { Object.assign(local, value); } } }
+  } });
+  vm.runInContext(source, context);
+  for (const seconds of [60, 120, 180, 180]) {
+    const error = new Error('429');
+    await context.chatGPTBackupRateLimit(error);
+    assert.equal(error.retrySeconds, seconds);
+    assert.match(error.message, /Shared cooldown/);
+  }
+  assert.equal(local.chatGPTRateLimitCount, 4);
+  const long = Object.assign(new Error('429'), { retrySeconds: 1200 });
+  await context.chatGPTBackupRateLimit(long);
+  assert.equal(long.retrySeconds, 1200);
+  assert.ok(local.chatGPTBackupRetryAt >= Date.now() + 1199000);
+});
+
 test('request diagnostics separate inventory, downloads and authentication before reporting errors', async () => {
   const logs = [];
   const context = vm.createContext({ chrome: {
     tabs: { onUpdated: events }, alarms: { onAlarm: events },
+    storage: { local: { async get() { return {}; }, async set() {} } },
     scripting: { async executeScript() { return [{ result: { error: 'throttled', status: 429, requests: [['authentication', 200], ['inventory', 429]] } }]; } }
   } });
   vm.runInContext(source, context);
@@ -285,7 +396,7 @@ test('request diagnostics separate inventory, downloads and authentication befor
   assert.match(logs[0], /outcomes=authentication:200, inventory:429/);
 });
 
-test('worker resumes pages and immediately downloads the next conversation on the same tab', async () => {
+test('worker resumes pages on the same tab and shares rate-limit cooldown across inventory and downloads', async () => {
   const local = { chatGPTBackupEnabled: true, chatGPTBackupScope: 'scope' }, session = {}, actions = [], reads = [];
   let downloaded = false, claims = 0, locked = false;
   const context = vm.createContext({ URL, AbortSignal, setTimeout: fn => fn(), navigator: { locks: { async request(name, options, fn) { assert.equal(name, "chatgpt-backup"); assert.equal(options.ifAvailable, true); if (locked) return fn(null); locked = true; try { await fn({}); } finally { locked = false; } } } }, chrome: {
@@ -311,7 +422,7 @@ test('worker resumes pages and immediately downloads the next conversation on th
   assert.ok(actions.includes('complete'));
   assert.ok(local.chatGPTBackupSavedAt);
   assert.equal(session.chatGPTBackupTabId, undefined);
-  // Inventory throttling during the initial scan does not block queue claims.
+  // An inventory 429 blocks queue claims and survives subsequent Sync attempts.
   let refreshClaims = 0;
   context.chatGPTInventory = async () => { throw Object.assign(new Error('Inventory throttled'), { status: 429, retrySeconds: 120 }); };
   context.chatGPTArchive = async action => {
@@ -320,31 +431,31 @@ test('worker resumes pages and immediately downloads the next conversation on th
     return {};
   };
   await context.chatGPTBackupRun();
-  assert.equal(refreshClaims, 1);
-  assert.ok(local.chatGPTInventoryRetryAt > Date.now());
-  assert.equal(local.chatGPTBackupRetryAt, undefined);
-  await context.chatGPTBackupRun(); // Refresh cooldown still allows the queue.
-  assert.equal(refreshClaims, 2);
-  // Other inventory failures also leave downloads eligible.
-  delete local.chatGPTInventoryRetryAt;
+  assert.equal(refreshClaims, 0);
+  assert.ok(local.chatGPTBackupRetryAt > Date.now());
+  await context.chatGPTBackupRun(true);
+  assert.equal(refreshClaims, 0);
+  // Other inventory failures leave downloads eligible.
+  delete local.chatGPTBackupRetryAt;
   context.chatGPTInventory = async () => { throw new Error('Inventory network failure'); };
   await context.chatGPTBackupRun();
-  assert.equal(refreshClaims, 3);
+  assert.equal(refreshClaims, 1);
   assert.equal(local.chatGPTBackupRetryAt, undefined);
-  // Download cooldown does not block inventory; a second worker cannot overlap it.
+  // Shared cooldown blocks inventory too; a second worker cannot overlap it.
   delete local.chatGPTInventoryRetryAt;
   local.chatGPTBackupRetryAt = Date.now() + 120000;
   let inventoryRuns = 0, finishInventory;
   context.chatGPTInventory = async () => { inventoryRuns++; await new Promise(resolve => { finishInventory = resolve; }); return true; };
+  await context.chatGPTBackupRun();
+  assert.equal(inventoryRuns, 0);
+  delete local.chatGPTBackupRetryAt;
   const running = context.chatGPTBackupRun();
   while (!finishInventory) await new Promise(resolve => setImmediate(resolve));
   await context.chatGPTBackupRun();
   assert.equal(inventoryRuns, 1);
-  assert.equal(refreshClaims, 3);
   finishInventory();
   await running;
-  assert.equal(refreshClaims, 3);
-  delete local.chatGPTBackupRetryAt;
+  assert.equal(refreshClaims, 2);
   // A rate limit stops the batch immediately, rather than claiming another job.
   let limitedClaims = 0;
   context.chatGPTArchive = async action => {
@@ -449,6 +560,19 @@ test('backup preview controls load in the real extension panel', async () => {
     assert.equal(await scopeInput.evaluate(e => e.validity.patternMismatch), true);
     await scopeInput.fill('personal');
     assert.equal(await page.getByRole('button', { name: 'Sync conversations', exact: true }).isVisible(), true);
+    assert.equal(await page.getByLabel('Minimum request interval (seconds)', { exact: true }).inputValue(), '2');
+    assert.equal(await page.getByLabel('Maximum retry backoff (minutes)', { exact: true }).inputValue(), '15');
+    await page.getByLabel('Minimum request interval (seconds)', { exact: true }).fill('0');
+    await page.getByRole('button', { name: 'Save backup settings', exact: true }).click();
+    assert.equal(await worker.evaluate(async () => (await chrome.storage.local.get('chatGPTRequestInterval')).chatGPTRequestInterval), undefined);
+    await page.getByLabel('Minimum request interval (seconds)', { exact: true }).fill('3');
+    await page.getByLabel('Maximum retry backoff (minutes)', { exact: true }).fill('10');
+    const cooldown = Date.now() + 120000;
+    await worker.evaluate(async until => chrome.storage.local.set({ chatGPTBackupRetryAt: until }), cooldown);
+    await page.getByRole('button', { name: 'Save backup settings', exact: true }).click();
+    await page.getByText('Backup settings saved. Active cooldowns are retained.', { exact: true }).waitFor();
+    assert.equal(await worker.evaluate(async () => (await chrome.storage.local.get('chatGPTBackupRetryAt')).chatGPTBackupRetryAt), cooldown);
+    await page.locator('#chatgpt-backup-cooldown').filter({ hasText: 'next retry no earlier than' }).waitFor();
     await page.getByRole('button', { name: 'Pause backup', exact: true }).click();
     await page.getByText('Paused. Saved snapshots and queued conversations are retained.', { exact: true }).waitFor();
     assert.equal(await worker.evaluate(async () => (await chrome.storage.local.get('chatGPTBackupEnabled')).chatGPTBackupEnabled), false);
@@ -462,6 +586,8 @@ test('backup preview controls load in the real extension panel', async () => {
     await page.reload();
     await page.locator('#chatgpt-backup > summary').click();
     await page.getByText(/12 known · 8 have backups · 4 have no backup/).waitFor();
+    assert.equal(await page.getByLabel('Minimum request interval (seconds)', { exact: true }).inputValue(), '3');
+    assert.equal(await page.getByLabel('Maximum retry backoff (minutes)', { exact: true }).inputValue(), '10');
     await page.getByText('Backup diagnostic log (last 200 events)', { exact: true }).click();
     assert.equal(await page.getByRole('button', { name: 'Download backup log', exact: true }).isVisible(), true);
     await page.locator('#chatgpt-backup-log').filter({ hasText: 'Paused. Saved snapshots' }).waitFor();

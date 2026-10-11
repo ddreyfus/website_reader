@@ -68,10 +68,20 @@
 
       <details id="chatgpt-backup">
         <summary>ChatGPT conversation backup (preview)</summary>
-        <p>Back up conversation JSON and readable text locally. Inventory finishes first, then conversations download one at a time. Partial downloads resume. Alternate branches and attachment files are not included yet.</p>
+        <p>Back up conversation JSON and readable text locally. Conversations download one at a time as inventory discovers them. Partial downloads resume. Alternate branches and attachment files are not included yet.</p>
         <label for="chatgpt-backup-scope">Account and workspace label</label>
         <input id="chatgpt-backup-scope" type="text" pattern="[A-Za-z0-9_\-]{1,128}" maxlength="128" placeholder="personal" required aria-describedby="chatgpt-backup-help">
         <p id="chatgpt-backup-help">Use a different label for each account/workspace and verify you are signed in to that account. Uses the local archive connection port. Add ~/sources/ChatGPT to directories to index for search and RAG.</p>
+        <form id="chatgpt-rate-settings">
+          <label for="chatgpt-request-interval">Minimum request interval (seconds)</label>
+          <input id="chatgpt-request-interval" name="request-interval" type="number" min="0.5" max="30" step="0.5" value="2" required aria-describedby="chatgpt-rate-help">
+          <label for="chatgpt-max-backoff">Maximum retry backoff (minutes)</label>
+          <input id="chatgpt-max-backoff" name="max-backoff" type="number" min="1" max="60" step="1" value="15" required aria-describedby="chatgpt-rate-help">
+          <p id="chatgpt-rate-help">Applies to all backup requests. Repeated rate limits increase the wait. ChatGPT's Retry-After is always honored, even when longer than this maximum. Saving or Sync will not shorten an active cooldown.</p>
+          <button type="submit">Save backup settings</button>
+          <p id="chatgpt-rate-settings-status" role="status"></p>
+        </form>
+        <p id="chatgpt-backup-cooldown" role="status"></p>
         <button id="chatgpt-backup-sync" type="button">Sync conversations</button>
         <button id="chatgpt-backup-pause" type="button">Pause backup</button>
         <p id="chatgpt-backup-summary">No backup inventory loaded yet.</p>

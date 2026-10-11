@@ -222,6 +222,16 @@ One inactive owned tab runs two sequential activities:
    its first page. Changed first pages or rejected continuation cursors start a
    new generation without overwriting the last good backup.
 
+ChatGPT backup settings provide a minimum request interval (default 2 seconds)
+and maximum retry backoff (default 15 minutes). Request starts are paced across
+inventory, authentication, and message pages; response/loading time counts toward
+the interval. Any HTTP 429 pauses both inventory and downloads using a persisted
+shared cooldown. Repeated limits double the delay with up to 10% jitter, capped
+by the configured maximum, while a longer `Retry-After` always takes precedence.
+The streak resets after successful backend requests at least five minutes beyond
+the last cooldown. The panel shows the next retry time. Sync and settings changes
+do not shorten an active cooldown.
+
 Enabled backup requests inventory checks every five minutes while a user ChatGPT
 page is open. Alarms resume unfinished inventory or conversation pages every
 30 seconds. Switching active tabs or closing the panel does not change the fetch

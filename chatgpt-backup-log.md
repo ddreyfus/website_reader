@@ -246,3 +246,10 @@ Do not equate visible sidebar discovery with a complete or current backup.
 - Reuse scoped project names from SQLite; paginate project metadata on an unknown project ID, at most once per scan. Persist project-only batches, including empty projects.
 - Discard legacy per-project conversation cursors while preserving recent/archived continuation and watermark state.
 - Live UI/list_threads tests supported the coverage assumption; raw Recents endpoint equivalence remains unverified because direct browser navigation was blocked.
+
+## October 10, 2026 — Request pacing and shared rate-limit cooldown
+
+- Pace request starts across authentication, inventory, and message-page calls; default interval is two seconds and response time counts toward it. Persist request timing across worker recreation.
+- Any 429 pauses inventory and downloads together. Persist exponential backoff with jitter, honor longer Retry-After values, and retain cooldown when Sync is pressed or the label changes.
+- Expose minimum interval and maximum backoff in ChatGPT backup settings, and show the next retry time in the panel.
+- Bound paced download batches by their existing deadline so saved pages can yield before the job lease expires.

@@ -7,6 +7,26 @@ import test from "node:test";
 import vm from "node:vm";
 import { chromium } from "playwright";
 
+test("worker startup restores enabled backup timers without Sync or resetting existing timers", async () => {
+  const code = await fs.readFile(path.resolve(import.meta.dirname, "../background.js"), "utf8");
+  for (const [enabled, existing] of [[true, false], [true, true], [false, false]]) {
+    const event = { addListener() {} };
+    const settings = { chatGPTBackupEnabled: enabled, chatGPTBackupRetryAt: Date.now() + 600000 };
+    const created = [];
+    const chrome = {
+      sidePanel: { async setPanelBehavior() {} },
+      runtime: { onMessage: event, onStartup: event },
+      tabs: { onRemoved: event, onUpdated: event },
+      downloads: { onChanged: event },
+      storage: { local: { async get() { return settings; }, async set() { assert.fail("Startup must preserve settings and cooldown"); } } },
+      alarms: { onAlarm: event, async get(name) { assert.equal(name, "chatgpt-backup"); return existing ? { name } : undefined; }, async create(name, options) { created.push([name, options.periodInMinutes]); } }
+    };
+    vm.runInNewContext(code, { chrome, importScripts() {} });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(created, enabled && !existing ? [["chatgpt-backup", 0.5]] : []);
+  }
+});
+
 test("Free Press redirects discard external sources before permissions or extraction", async () => {
   const code = await fs.readFile(path.resolve(import.meta.dirname, "../background.js"), "utf8");
   for (const destination of ["https://cbsnews.com/news/story", "https://thefp.com.fake.test/p/story", "https://www.thefp.com/p/story"]) {
@@ -44,6 +64,7 @@ test("page messages cannot start background email collection", async () => {
       onMessage: { addListener(listener) { receive = listener; } }, onStartup: event
     },
     alarms: { onAlarm: event },
+    storage: { local: { async get() { return {}; } } },
     tabs: { onRemoved: event, onUpdated: event },
     downloads: { onChanged: event }
   };

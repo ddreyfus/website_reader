@@ -1,5 +1,14 @@
 importScripts("collection.js", "chatgpt-backup.js");
 
+// Alarms can disappear on extension reload or browser restart. Check on every
+// worker start without postponing an existing timer or changing saved cooldowns.
+(async () => {
+  if ((await chrome.storage.local.get("chatGPTBackupEnabled")).chatGPTBackupEnabled &&
+      !await chrome.alarms.get("chatgpt-backup")) {
+    await chrome.alarms.create("chatgpt-backup", { periodInMinutes: 0.5 });
+  }
+})().catch(error => appendLog(`Could not restore backup timer: ${error.message || String(error)}`));
+
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(async error => {
   await appendLog(`Could not enable Website Reader panel: ${error.message || String(error)}`);
 });
@@ -79,7 +88,6 @@ async function appendLog(message) {
 
 chrome.runtime.onStartup.addListener(async () => {
   try {
-    if ((await chrome.storage.local.get("chatGPTBackupEnabled")).chatGPTBackupEnabled) await chrome.alarms.create("chatgpt-backup", { periodInMinutes: 0.5 });
     const { collectionState: state } = await chrome.storage.local.get("collectionState");
     if (!state) return;
     await chrome.alarms.clear("email-collection");

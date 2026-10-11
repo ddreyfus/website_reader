@@ -505,6 +505,15 @@ loadState();
 
 const chatGPTBackupScope = document.querySelector("#chatgpt-backup-scope");
 const chatGPTBackupStatus = document.querySelector("#chatgpt-backup-status");
+const chatGPTRequestInterval = document.querySelector("#chatgpt-request-interval");
+const chatGPTMaxBackoff = document.querySelector("#chatgpt-max-backoff");
+document.querySelector("#chatgpt-rate-settings").addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    await chrome.storage.local.set({ chatGPTRequestInterval: chatGPTRequestInterval.valueAsNumber, chatGPTMaxBackoffMinutes: chatGPTMaxBackoff.valueAsNumber });
+    document.querySelector("#chatgpt-rate-settings-status").textContent = "Backup settings saved. Active cooldowns are retained.";
+  } catch (error) { document.querySelector("#chatgpt-rate-settings-status").textContent = error.message; }
+});
 document.querySelector("#chatgpt-backup-download-log").addEventListener("click", async () => {
   try {
     const { chatGPTBackupLog = "" } = await chrome.storage.local.get("chatGPTBackupLog");
@@ -513,8 +522,14 @@ document.querySelector("#chatgpt-backup-download-log").addEventListener("click",
   } catch (error) { chatGPTBackupStatus.textContent = error.message || String(error); }
 });
 async function restoreChatGPTBackup(restoreScope = true) {
-  const saved = await chrome.storage.local.get(["chatGPTBackupScope", "chatGPTBackupProgress", "chatGPTBackupSummary", "chatGPTBackupUpdatedAt", "chatGPTBackupSavedAt", "chatGPTBackupLog"]);
-  if (restoreScope && saved.chatGPTBackupScope) chatGPTBackupScope.value = saved.chatGPTBackupScope;
+  const saved = await chrome.storage.local.get(["chatGPTBackupScope", "chatGPTBackupProgress", "chatGPTBackupSummary", "chatGPTBackupUpdatedAt", "chatGPTBackupSavedAt", "chatGPTBackupLog", "chatGPTRequestInterval", "chatGPTMaxBackoffMinutes", "chatGPTBackupRetryAt", "chatGPTBackupEnabled"]);
+  if (restoreScope) {
+    if (saved.chatGPTBackupScope) chatGPTBackupScope.value = saved.chatGPTBackupScope;
+    chatGPTRequestInterval.value = saved.chatGPTRequestInterval ?? 2;
+    chatGPTMaxBackoff.value = saved.chatGPTMaxBackoffMinutes ?? 15;
+  }
+  document.querySelector("#chatgpt-backup-cooldown").textContent = saved.chatGPTBackupRetryAt > Date.now()
+    ? `Rate limit cooldown: next retry no earlier than ${new Date(saved.chatGPTBackupRetryAt).toLocaleString()}.${saved.chatGPTBackupEnabled ? "" : " Backup is paused; Sync resumes it after cooldown."}` : "";
   if (saved.chatGPTBackupProgress) chatGPTBackupStatus.textContent = saved.chatGPTBackupProgress;
   document.querySelector("#chatgpt-backup-log").textContent = saved.chatGPTBackupLog || "No backup diagnostic events recorded yet.";
   document.querySelector("#chatgpt-backup-summary").textContent = saved.chatGPTBackupSummary || "No backup inventory loaded yet.";
@@ -531,12 +546,12 @@ for (const action of ["sync", "pause"]) {
       if (action === "sync" && !await chrome.permissions.request({ origins: ["https://chatgpt.com/*"] })) throw new Error("ChatGPT site access was declined.");
       const result = await chrome.runtime.sendMessage({ type: "chatGPTBackup", action, scope: chatGPTBackupScope.value });
       if (!result?.ok) throw new Error(result?.error || "Backup could not start.");
-      if (action === "sync") chatGPTBackupStatus.textContent = "Backup enabled. Discovering conversations…";
+      if (action === "sync") await restoreChatGPTBackup(false);
     } catch (error) { chatGPTBackupStatus.textContent = error.message || String(error); }
   });
 }
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && ["chatGPTBackupProgress", "chatGPTBackupSummary", "chatGPTBackupUpdatedAt", "chatGPTBackupSavedAt"].some(key => key in changes)) {
+  if (area === "local" && ["chatGPTBackupProgress", "chatGPTBackupSummary", "chatGPTBackupUpdatedAt", "chatGPTBackupSavedAt", "chatGPTBackupRetryAt", "chatGPTBackupEnabled"].some(key => key in changes)) {
     restoreChatGPTBackup(false).catch(error => { chatGPTBackupStatus.textContent = error.message; });
   }
 });

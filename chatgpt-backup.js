@@ -1,5 +1,5 @@
 // Authenticated reads stay in the owned ChatGPT page. Tokens never leave it.
-async function chatGPTRead(kind, id = "", cursor = "", project = "") {
+async function chatGPTRead(kind, id = "", cursor = "", project = "", interval = 0, lastRequestAt = 0) {
   const requests = [];
   const sessionKey = Symbol.for("website-reader.chatgpt-backup.session");
   try {
@@ -7,6 +7,9 @@ async function chatGPTRead(kind, id = "", cursor = "", project = "") {
     const get = async (path, headers = {}) => {
       const category = path === "/api/auth/session" || path.startsWith("/backend-api/accounts/") ? "authentication" : kind === "conversation" ? "download" : "inventory";
       let response;
+      const wait = lastRequestAt + interval - Date.now();
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+      lastRequestAt = Date.now();
       try {
         response = await fetch(path, { headers, credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(20000) });
       } catch (error) {
@@ -19,8 +22,7 @@ async function chatGPTRead(kind, id = "", cursor = "", project = "") {
         error.status = response.status;
         const retryAfter = response.headers.get("Retry-After");
         const retrySeconds = Number(retryAfter) || (Date.parse(retryAfter) - Date.now()) / 1000;
-        error.retrySeconds = Math.min(3600, Math.max(60, Math.ceil(retrySeconds) || 60));
-        if (response.status === 429) error.message += ` Automatic retry after ${error.retrySeconds} seconds.`;
+        error.retrySeconds = Math.max(60, Number.isFinite(retrySeconds) ? Math.ceil(retrySeconds) : 60);
         const clean = value => {
           let text = String(value);
           if (headers.Authorization) text = text.replaceAll(headers.Authorization.replace(/^Bearer /, ""), "[redacted]");
@@ -92,7 +94,7 @@ async function chatGPTRead(kind, id = "", cursor = "", project = "") {
     const headers = { Authorization: `Bearer ${session.accessToken}` };
     if (session.backupAccountId) headers["Chatgpt-Account-Id"] = session.backupAccountId;
     const identity = `${session.user.id}:${workspace || "personal"}`;
-    if (kind === "identity") return { identity, requests };
+    if (kind === "identity") return { identity, requests, lastRequestAt };
     let path;
     if (kind === "projects") {
       path = `/backend-api/gizmos/snorlax/sidebar?conversations_per_gizmo=0${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
@@ -108,16 +110,26 @@ async function chatGPTRead(kind, id = "", cursor = "", project = "") {
         : `/backend-api/conversations/${id}?num_turns=10&include_has_versions=true`;
     }
     if (!path) throw new Error("Unsupported ChatGPT read request.");
-    return { identity, data: await get(path, headers), requests };
+    return { identity, data: await get(path, headers), requests, lastRequestAt };
   } catch (error) {
     if (error.status === 401 || error.status === 403) delete globalThis[sessionKey];
-    return { error: error.message || String(error), status: error.status, retrySeconds: error.retrySeconds, requests };
+    return { error: error.message || String(error), status: error.status, retrySeconds: error.retrySeconds, requests, lastRequestAt };
   }
 }
 
 async function chatGPTReadPage(tabId, identity, kind, id = "", cursor = "", project = "") {
-  const [injection] = await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", func: chatGPTRead, args: [kind, id, cursor, project] });
+  const settings = await chrome.storage.local.get(["chatGPTRequestInterval", "chatGPTLastRequestAt", "chatGPTBackupRetryAt", "chatGPTRateLimitCount"]);
+  if (settings.chatGPTBackupRetryAt > Date.now()) throw Object.assign(new Error(`Rate limit cooldown; next retry at ${new Date(settings.chatGPTBackupRetryAt).toLocaleString()}.`), { status: 429, cooldown: true });
+  const interval = Math.max(0.5, Math.min(30, Number(settings.chatGPTRequestInterval) || 2)) * 1000;
+  // Reserve before injection so a terminated worker cannot immediately burst again.
+  await chrome.storage.local.set({ chatGPTLastRequestAt: Math.max(Date.now(), (settings.chatGPTLastRequestAt || 0) + interval) });
+  const [injection] = await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", func: chatGPTRead, args: [kind, id, cursor, project, interval, settings.chatGPTLastRequestAt || 0] });
   const result = injection?.result;
+  if (Number.isFinite(result?.lastRequestAt)) await chrome.storage.local.set({ chatGPTLastRequestAt: result.lastRequestAt });
+  if (!result?.error && result?.requests?.some(([category, status]) => category !== "authentication" && status === 200)
+      && settings.chatGPTRateLimitCount && Date.now() - settings.chatGPTBackupRetryAt >= 5 * 60 * 1000) {
+    await chrome.storage.local.set({ chatGPTRateLimitCount: 0 });
+  }
   if (result?.requests?.length) {
     const counts = ["inventory", "download", "authentication"].map(category => `${category}=${result.requests.filter(([name]) => name === category).length}`).join(" · ");
     const outcomes = result.requests.map(([category, status]) => `${category}:${status}`).join(", ");
@@ -127,6 +139,19 @@ async function chatGPTReadPage(tabId, identity, kind, id = "", cursor = "", proj
   if (!result?.identity) throw new Error("ChatGPT page returned no authenticated identity.");
   if (identity && identity !== result.identity) throw new Error("ChatGPT account/workspace changed. Use its own backup label.");
   return result;
+}
+
+// Shared by inventory, authentication, and downloads; survives worker/browser restarts.
+async function chatGPTBackupRateLimit(error) {
+  if (error.cooldown) return;
+  const settings = await chrome.storage.local.get(["chatGPTMaxBackoffMinutes", "chatGPTRateLimitCount", "chatGPTBackupRetryAt"]);
+  const count = Math.min(16, (settings.chatGPTRateLimitCount || 0) + 1);
+  const maximum = Math.max(1, Math.min(60, Number(settings.chatGPTMaxBackoffMinutes) || 15)) * 60;
+  const backoff = Math.min(maximum, 60 * 2 ** (count - 1) * (1 + Math.random() * 0.1));
+  error.retrySeconds = Math.ceil(Math.max(backoff, error.retrySeconds || 60));
+  const until = Math.max(settings.chatGPTBackupRetryAt || 0, Date.now() + error.retrySeconds * 1000);
+  await chrome.storage.local.set({ chatGPTBackupRetryAt: until, chatGPTRateLimitCount: count });
+  error.message += ` Shared cooldown: retry after ${error.retrySeconds} seconds, at ${new Date(until).toLocaleString()}.`;
 }
 
 // Each continuation is committed in the same SQLite transaction as its rows.
@@ -239,6 +264,10 @@ async function chatGPTBackupRun(discover = false) {
     const settings = await chrome.storage.local.get(["chatGPTBackupScope", "chatGPTBackupEnabled", "chatGPTBackupRequestedAt", "chatGPTBackupDiscoveredAt", "chatGPTBackupRetryAt", "chatGPTInventoryRetryAt"]);
     const scope = settings.chatGPTBackupScope;
     if (!settings.chatGPTBackupEnabled || !/^[A-Za-z0-9_-]{1,128}$/.test(scope || "")) return;
+    if (settings.chatGPTBackupRetryAt > Date.now()) {
+      await chatGPTBackupProgress(`Rate limit cooldown: inventory and downloads paused. Next retry at ${new Date(settings.chatGPTBackupRetryAt).toLocaleString()}.`);
+      return;
+    }
     if (!await chrome.permissions.contains({ origins: ["https://chatgpt.com/*"] })) return;
     const { chatGPTBackupTabId: orphan } = await chrome.storage.session.get("chatGPTBackupTabId");
     const sessions = await chrome.tabs.query({ url: "https://chatgpt.com/*" });
@@ -246,7 +275,7 @@ async function chatGPTBackupRun(discover = false) {
     let tab;
     try {
       let { checkpoint, projects } = await chatGPTArchive(`checkpoint?scope=${encodeURIComponent(scope)}`);
-      // Inventory and downloads share the tab but have independent retry schedules.
+      // Non-rate-limit inventory failures retain their independent retry schedule.
       const inventoryDue = !checkpoint?.complete || discover || (settings.chatGPTBackupRequestedAt || 0) > (settings.chatGPTBackupDiscoveredAt || 0);
       if (Number.isInteger(orphan)) {
         try { const previous = await chrome.tabs.get(orphan); if (previous.url?.startsWith("https://chatgpt.com/")) await chrome.tabs.remove(orphan); } catch { /* Already gone. */ }
@@ -268,7 +297,7 @@ async function chatGPTBackupRun(discover = false) {
             await chrome.storage.local.set({ chatGPTBackupDiscoveredAt: settings.chatGPTBackupRequestedAt || Date.now(), chatGPTInventoryRetryAt: 0 });
           }
         } catch (error) {
-          if (error.status === 401 || error.status === 403) throw error;
+          if (error.status === 429 || error.status === 401 || error.status === 403) throw error;
           await chrome.storage.local.set({ chatGPTInventoryRetryAt: Date.now() + (error.retrySeconds || 60) * 1000 });
           await chatGPTBackupProgress(`Inventory refresh deferred: ${error.message} Previously queued downloads remain eligible.`);
         }
@@ -292,7 +321,7 @@ async function chatGPTBackupRun(discover = false) {
             const { matches } = await chatGPTArchive("verify", { scope, ...job, page: data });
             if (!matches) throw Object.assign(new Error("Conversation changed since its saved first page; starting a new version."), { restart: true });
           }
-          for (let page = 0; !progress.complete && page < 10; page++) {
+          for (let page = 0; !progress.complete && page < 10 && Date.now() < deadline; page++) {
             if (!await chatGPTBackupActive(scope)) throw new Error("Backup paused; downloaded pages retained.");
             await chatGPTBackupProgress(`Downloading ${job.title}: ${progress.pages} pages already saved. Fetching the next page…`);
             const { data } = await chatGPTReadPage(tab.id, checkpoint.identity, "conversation", job.id, progress.cursor, job.project_id);
@@ -309,7 +338,7 @@ async function chatGPTBackupRun(discover = false) {
             break;
           }
         } catch (error) {
-          if (error.status === 429) await chrome.storage.local.set({ chatGPTBackupRetryAt: Date.now() + (error.retrySeconds || 60) * 1000 });
+          if (error.status === 429) await chatGPTBackupRateLimit(error);
           await chatGPTArchive(error.restart || (error.status === 400 && progress?.cursor) ? "restart" : "fail", { scope, ...job, error: error.message || String(error), retry_seconds: error.retrySeconds });
           await chatGPTBackupProgress(`Waiting to retry ${job.title}: ${error.message || String(error)} Downloaded pages retained.`);
           if (error.status === 429 || error.status === 401 || error.status === 403) break;
@@ -317,7 +346,7 @@ async function chatGPTBackupRun(discover = false) {
       }
       await chatGPTBackupCounts(scope);
     } catch (error) {
-      if (error.status === 429) await chrome.storage.local.set({ chatGPTBackupRetryAt: Date.now() + (error.retrySeconds || 60) * 1000 });
+      if (error.status === 429) await chatGPTBackupRateLimit(error);
       await chatGPTBackupProgress(`Backup access paused: ${error.message || String(error)}`);
     } finally {
       if (tab) { await chrome.storage.session.remove("chatGPTBackupTabId"); try { await chrome.tabs.remove(tab.id); } catch { /* Already closed. */ } }
@@ -380,7 +409,7 @@ function handleChatGPTBackup(message, sender, sendResponse) {
       if (!/^[A-Za-z0-9_-]{1,128}$/.test(message.scope || "")) throw new Error("Enter an account/workspace label using letters, numbers, hyphens, or underscores.");
       const current = await chrome.storage.local.get(["chatGPTBackupScope", "chatGPTBackupEnabled"]);
       if (current.chatGPTBackupEnabled && current.chatGPTBackupScope !== message.scope) throw new Error("Pause backup before changing the account/workspace label.");
-      if (current.chatGPTBackupScope !== message.scope) await chrome.storage.local.set({ chatGPTBackupSummary: "", chatGPTBackupSavedAt: null, chatGPTBackupFullDiscoveryAt: null, chatGPTInventoryRetryAt: 0, chatGPTBackupRetryAt: 0 });
+      if (current.chatGPTBackupScope !== message.scope) await chrome.storage.local.set({ chatGPTBackupSummary: "", chatGPTBackupSavedAt: null, chatGPTBackupFullDiscoveryAt: null, chatGPTInventoryRetryAt: 0 });
       await chrome.storage.local.set({ chatGPTBackupScope: message.scope, chatGPTBackupEnabled: true, chatGPTBackupRequestedAt: Date.now() });
       await chrome.alarms.create("chatgpt-backup", { periodInMinutes: 0.5 });
       // The work continues after returning to the panel or switching tabs.
