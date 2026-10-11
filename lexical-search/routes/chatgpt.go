@@ -117,6 +117,24 @@ func RegisterChatGPTHandlers(router *gin.Engine, db *sqlx.DB, root string) error
 		}
 		c.JSON(200, gin.H{"checkpoint": value, "projects": projects})
 	})
+	group.POST("/import", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<20)
+		var input struct {
+			Scope        string          `json:"scope"`
+			Conversation json.RawMessage `json:"conversation"`
+			DryRun       bool            `json:"dry_run"`
+		}
+		if err := c.ShouldBindJSON(&input); err != nil || !chatGPTID.MatchString(input.Scope) {
+			c.JSON(400, gin.H{"error": "valid scope and conversation JSON required"})
+			return
+		}
+		result, err := chatGPTImport(db, root, input.Scope, input.Conversation, input.DryRun)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"result": result})
+	})
 	group.POST("/:action", func(c *gin.Context) {
 		if strings.Split(c.GetHeader("Content-Type"), ";")[0] != "application/json" {
 			c.JSON(415, gin.H{"error": "application/json required"})

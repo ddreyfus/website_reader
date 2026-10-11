@@ -197,6 +197,9 @@ The self-contained [Bleve search service](lexical-search/README.md) provides loc
 
 ## ChatGPT conversation backup preview
 
+To import a native account export, see [Import a ChatGPT export](chatgpt-import.md).
+The importer preserves the full conversation tree and indexes alternate messages.
+
 The side panel's **ChatGPT conversation backup (preview)** saves conversation
 JSON pages and readable Markdown through the local service. Open ChatGPT while
 signed in, enter a distinct account/workspace label, and select **Sync conversations**.
