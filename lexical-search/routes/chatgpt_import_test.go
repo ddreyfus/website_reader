@@ -46,6 +46,20 @@ func TestChatGPTImportBranchesAndFreshness(t *testing.T) {
 	if count != 0 {
 		t.Fatal("dry run modified database")
 	}
+	if _, err := db.Exec(`INSERT INTO chatgpt_conversations(scope,id,title,url,remote_updated_at) VALUES('pending','chat','Newer','https://chatgpt.com/c/chat','2026-10-11T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := chatGPTImport(db, root, "pending", raw, false); err != nil || result != "pending-refresh" {
+		t.Fatal(result, err)
+	}
+	fallback, err := os.ReadFile(filepath.Join(root, "pending", "conversations", "chat", "conversation.md"))
+	if err != nil || !strings.Contains(string(fallback), "Selected answer") {
+		t.Fatal("missing fallback", err)
+	}
+	var pending int
+	if err := db.Get(&pending, `SELECT generation-saved_generation FROM chatgpt_conversations WHERE scope='pending'`); err != nil || pending != 1 {
+		t.Fatal("newer download no longer pending", pending, err)
+	}
 	dir := filepath.Join(root, "personal", "conversations", "chat")
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatal("dry run wrote archive")

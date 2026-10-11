@@ -179,7 +179,9 @@ func chatGPTImport(db *sqlx.DB, root, scope string, raw json.RawMessage, dryRun 
 		}
 	}
 	result := "imported"
-	if newer {
+	if newer && saved == 0 {
+		result = "pending-refresh"
+	} else if newer {
 		result = "branches-only"
 	} else if previousHash == hash && generation == saved {
 		result = "unchanged"
@@ -195,10 +197,19 @@ func chatGPTImport(db *sqlx.DB, root, scope string, raw json.RawMessage, dryRun 
 			return "", err
 		}
 	}
-	if !newer {
+	if !newer || saved == 0 {
 		if err := chatGPTWrite(filepath.Join(dir, "conversation.md"), []byte(main.String())); err != nil {
 			return "", err
 		}
+	}
+	if newer && saved == 0 {
+		// Inventory can be newer without having any downloaded content. Keep its
+		// pending generation, but make the exported transcript available meanwhile.
+		_, err = tx.Exec(`UPDATE chatgpt_conversations SET content_hash=?,saved_at=? WHERE scope=? AND id=?`, hash, time.Now().Unix(), scope, id)
+		if err != nil {
+			return "", err
+		}
+	} else if !newer {
 		_, err = tx.Exec(`INSERT INTO chatgpt_conversations(scope,id,title,url,remote_updated_at,generation,saved_generation,content_hash,saved_at) VALUES(?,?,?,?,?,1,1,?,?)
 ON CONFLICT(scope,id) DO UPDATE SET title=excluded.title,remote_updated_at=excluded.remote_updated_at,
 generation=generation+CASE WHEN content_hash!=excluded.content_hash THEN 1 ELSE 0 END,

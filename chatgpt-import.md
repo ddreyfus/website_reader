@@ -28,6 +28,9 @@ can still supply alternate branches. An older export also cannot replace a newer
 import's branch file. Later browser syncs can refresh the main transcript without
 removing the export tree or its alternate messages.
 
+If newer inventory exists but has never been downloaded, the export supplies a
+fallback transcript and the newer browser generation remains pending for sync.
+
 Add `~/sources/ChatGPT` to the archive's directories to index. The normal watcher
 indexes the Markdown files and updates search automatically. The import does not
 mark browser inventory discovery complete or delete conversations absent from
