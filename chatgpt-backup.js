@@ -265,6 +265,7 @@ async function chatGPTBackupRun(discover = false) {
     const scope = settings.chatGPTBackupScope;
     if (!settings.chatGPTBackupEnabled || !/^[A-Za-z0-9_-]{1,128}$/.test(scope || "")) return;
     if (settings.chatGPTBackupRetryAt > Date.now()) {
+      try { await chatGPTBackupCounts(scope); } catch { /* Local archive may be offline; keep the cooldown active. */ }
       await chatGPTBackupProgress(`Rate limit cooldown: inventory and downloads paused. Next retry at ${new Date(settings.chatGPTBackupRetryAt).toLocaleString()}.`);
       return;
     }

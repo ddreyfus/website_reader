@@ -487,6 +487,34 @@ test('worker resumes pages on the same tab and shares rate-limit cooldown across
   assert.equal(claims, 2);
 });
 
+test('cooldown refreshes local counts without contacting ChatGPT and survives an offline archive', async () => {
+  const local = { chatGPTBackupEnabled: true, chatGPTBackupScope: 'personal', chatGPTBackupRetryAt: Date.now() + 120000, chatGPTBackupSummary: 'stale counts' };
+  const until = local.chatGPTBackupRetryAt;
+  let statusCalls = 0, offline = false, progress;
+  const context = vm.createContext({
+    navigator: { locks: { async request(name, options, run) { await run({}); } } },
+    chrome: { storage: { local: { async get() { return local; }, async set(value) { Object.assign(local, value); } } } },
+    async chatGPTArchive(action) {
+      assert.equal(action, 'status?scope=personal');
+      statusCalls++;
+      if (offline) throw new Error('Archive offline');
+      return { root: '/archive', conversations: [], inventory_complete: true };
+    },
+    async chatGPTBackupProgress(message) { progress = message; }
+  });
+  vm.runInContext(source.slice(source.indexOf('async function chatGPTBackupRun('), source.indexOf('async function chatGPTArchive(')), context);
+  vm.runInContext(source.slice(source.indexOf('async function chatGPTBackupCounts('), source.indexOf('async function chatGPTBackupActive(')), context);
+  await context.chatGPTBackupRun();
+  assert.equal(statusCalls, 1);
+  assert.match(local.chatGPTBackupSummary, /0 known · 0 have backups · 0 have no backup/);
+  assert.match(progress, /Rate limit cooldown/);
+  offline = true;
+  await context.chatGPTBackupRun();
+  assert.equal(statusCalls, 2);
+  assert.equal(local.chatGPTBackupRetryAt, until);
+  assert.match(progress, /Rate limit cooldown/);
+});
+
 test('backup summary distinguishes durable backups from mutually exclusive queue states', async () => {
   let summary;
   const context = vm.createContext({
@@ -551,7 +579,7 @@ test('automatic discovery persists requests, coalesces navigation, and ignores o
   assert.equal(await context.chatGPTBackupAutoRequest({ id: 10, url: 'https://chatgpt.com/' }), false);
 });
 
-test('backup preview controls load in the real extension panel', async () => {
+test('backup controls load in the real extension panel', async () => {
   const os = await import('node:os');
   const path = await import('node:path');
   const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'website-reader-chatgpt-preview-'));
@@ -563,6 +591,7 @@ test('backup preview controls load in the real extension panel', async () => {
     worker ||= await context.waitForEvent('serviceworker');
     const page = await context.newPage();
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+    assert.equal(await page.locator('#chatgpt-backup > summary').textContent(), 'ChatGPT conversation backup');
     await page.locator('#chatgpt-backup > summary').click();
     await page.locator('#archive-settings > summary').click();
     await page.getByLabel('Account and workspace label', { exact: true }).fill('personal');
