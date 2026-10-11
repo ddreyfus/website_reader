@@ -7,7 +7,7 @@ import test from "node:test";
 import { chromium } from "playwright";
 
 test("extension loads, saves, and reconnects archive settings", async () => {
-  let settings = { port: 8766, archive_root: "~/reading-archive", index_directories: ["~/articles"], search_limit: 30 };
+  let settings = { port: 8766, archive_root: "~/reading-archive", chatgpt_root: "~/sources/ChatGPT", index_directories: ["~/articles"], search_limit: 30 };
   const service = http.createServer(async (request, response) => {
     if (request.method === "PUT") {
       let body = "";
@@ -39,10 +39,12 @@ test("extension loads, saves, and reconnects archive settings", async () => {
     await page.locator("#archive-port").fill("9876");
     await page.locator("#archive-root").fill("~/new-archive");
     await page.locator("#archive-search-limit").fill("42");
+    assert.equal(await page.locator("#chatgpt-archive-root").inputValue(), "~/sources/ChatGPT");
+    await page.locator("#chatgpt-archive-root").fill("~/my-chats");
     await page.locator("#archive-directories").fill("~/articles\n\n /test/source \n");
     await page.getByRole("button", { name: "Save settings" }).click();
     await page.getByText(/Settings saved. Restart/).waitFor();
-    assert.deepEqual(settings, { port: 9876, archive_root: "~/new-archive", index_directories: ["~/articles", "/test/source"], search_limit: 42 });
+    assert.deepEqual(settings, { port: 9876, archive_root: "~/new-archive", chatgpt_root: "~/my-chats", index_directories: ["~/articles", "/test/source"], search_limit: 42 });
     assert.equal(await page.locator("#archive-connection-port").inputValue(), "9876");
     // A failed reconnect must disable edits rather than retain stale service state.
     await page.locator("#archive-connection-port").fill("1");

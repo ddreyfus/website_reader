@@ -8,15 +8,15 @@ import (
 
 func TestConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	port, root, _, searchLimit, err := Read(path)
-	if err != nil || port != 8766 || root != "~/reading-archive" || searchLimit != 30 {
+	port, root, _, searchLimit, chatGPTRoot, err := Read(path)
+	if err != nil || port != 8766 || root != "~/reading-archive" || searchLimit != 30 || chatGPTRoot != "~/sources/ChatGPT" {
 		t.Fatalf("defaults: %d %s %v", port, root, err)
 	}
-	if err = Save(path, 9876, "~/custom-archive", []string{"~/articles"}, 30); err != nil {
+	if err = Save(path, 9876, "~/custom-archive", []string{"~/articles"}, 30, "~/custom-chatgpt"); err != nil {
 		t.Fatal(err)
 	}
-	port, root, directories, _, err := Read(path)
-	if err != nil || port != 9876 || root != "~/custom-archive" || len(directories) != 1 || directories[0] != "~/articles" {
+	port, root, directories, _, chatGPTRoot, err := Read(path)
+	if err != nil || port != 9876 || root != "~/custom-archive" || len(directories) != 1 || directories[0] != "~/articles" || chatGPTRoot != "~/custom-chatgpt" {
 		t.Fatalf("round trip: %d %s %v", port, root, err)
 	}
 	info, err := os.Stat(path)
@@ -30,15 +30,15 @@ func TestConfiguration(t *testing.T) {
 	if err != nil || !filepath.IsAbs(expanded) {
 		t.Fatalf("expansion: %s %v", expanded, err)
 	}
-	for _, body := range []string{`null`, `[]`, `{"port":0}`, `{"port":65536}`, `{"port":1.5}`, `{"port":null}`, `{"archive_root":null}`, `{"archive_root":"relative"}`, `{"api_key":"secret"}`, `{"search_limit":0}`, `{"search_limit":101}`, `{"search_limit":null}`, `{"search_limit":1.5}`, `{"index_directories":null}`, `{"index_directories":["relative"]}`, `{"index_directories":["~/articles","~/articles/sub"]}`, `{"index_directories":["~/reading-archive"]}`} {
-		if _, _, _, _, err := Parse([]byte(body)); err == nil {
+	for _, body := range []string{`{"chatgpt_root":null}`, `{"chatgpt_root":"relative"}`, `{"chatgpt_root":"~/reading-archive/indexes/chats"}`, `null`, `[]`, `{"port":0}`, `{"port":65536}`, `{"port":1.5}`, `{"port":null}`, `{"archive_root":null}`, `{"archive_root":"relative"}`, `{"api_key":"secret"}`, `{"search_limit":0}`, `{"search_limit":101}`, `{"search_limit":null}`, `{"search_limit":1.5}`, `{"index_directories":null}`, `{"index_directories":["relative"]}`, `{"index_directories":["~/articles","~/articles/sub"]}`, `{"index_directories":["~/reading-archive"]}`} {
+		if _, _, _, _, _, err := Parse([]byte(body)); err == nil {
 			t.Errorf("accepted invalid config: %s", body)
 		}
 	}
-	if err = Save(path, 0, root, nil, 30); err == nil {
+	if err = Save(path, 0, root, nil, 30, chatGPTRoot); err == nil {
 		t.Fatal("invalid save accepted")
 	}
-	port, _, _, _, err = Read(path)
+	port, _, _, _, _, err = Read(path)
 	if err != nil || port != 9876 {
 		t.Fatal("invalid write changed saved config")
 	}

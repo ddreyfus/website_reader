@@ -69,14 +69,10 @@
       <details id="chatgpt-backup">
         <summary>ChatGPT conversation backup (preview)</summary>
         <p>Back up conversation JSON and readable text locally. Conversations download one at a time as inventory discovers them. Partial downloads resume. Alternate branches and attachment files are not included yet.</p>
-        <label for="chatgpt-backup-scope">Account and workspace label</label>
-        <input id="chatgpt-backup-scope" type="text" pattern="[A-Za-z0-9_\-]{1,128}" maxlength="128" placeholder="personal" required aria-describedby="chatgpt-backup-help">
-        <p id="chatgpt-backup-help">Use a different label for each account/workspace and verify you are signed in to that account. Uses the local archive connection port. Add ~/sources/ChatGPT to directories to index for search and RAG.</p>
+        <p>Enable automatic archiving and choose its folder in Local archive settings. The panel and your ChatGPT tabs can stay closed; Chrome and the local archive service must be running.</p>
         <p id="chatgpt-backup-cooldown" role="status"></p>
-        <button id="chatgpt-backup-sync" type="button">Sync conversations</button>
-        <button id="chatgpt-backup-pause" type="button">Pause backup</button>
         <p id="chatgpt-backup-summary">No backup inventory loaded yet.</p>
-        <p id="chatgpt-backup-status" role="status" aria-atomic="true">Select Sync conversations once to enable automatic backup on ChatGPT. Rechecks every five minutes while ChatGPT is open. Pause disables automatic backup. Work continues when you switch tabs or close this panel.</p>
+        <p id="chatgpt-backup-status" role="status" aria-atomic="true">Configure automatic ChatGPT archiving below. Saved settings control whether it runs.</p>
         <p id="chatgpt-backup-updated"></p>
         <details><summary>Backup diagnostic log (last 200 events)</summary><button id="chatgpt-backup-download-log" type="button">Download backup log</button><pre id="chatgpt-backup-log"></pre></details>
       </details>
@@ -105,6 +101,8 @@
             <input id="archive-port" name="port" type="number" min="1" max="65535" step="1" required>
             <label for="archive-root">Archive folder</label>
             <input id="archive-root" name="archive_root" type="text" maxlength="2048" required aria-describedby="archive-config-help">
+            <label for="chatgpt-archive-root">ChatGPT archive folder</label>
+            <input id="chatgpt-archive-root" name="chatgpt_root" type="text" maxlength="2048" required aria-describedby="archive-config-help">
             <label for="archive-directories">Directories to index (one per line)</label>
             <textarea id="archive-directories" name="index_directories" rows="4" maxlength="2048" aria-describedby="archive-directories-help"></textarea>
             <p id="archive-directories-help">Subdirectories are included. Use absolute paths or ~/folder. An empty list disables automatic indexing.</p>
@@ -117,12 +115,16 @@
         <p id="archive-config-status" role="status" aria-atomic="true">Start the local archive service, then load its settings.</p>
         <form id="chatgpt-rate-settings">
           <fieldset>
-            <legend>ChatGPT backup</legend>
+            <legend>ChatGPT archiving</legend>
+            <label><input id="chatgpt-backup-enabled" name="enabled" type="checkbox"> Archive ChatGPT conversations automatically</label>
+            <label for="chatgpt-backup-scope">Account and workspace label</label>
+            <input id="chatgpt-backup-scope" name="scope" type="text" pattern="[A-Za-z0-9_\-]{1,128}" maxlength="128" placeholder="personal" required aria-describedby="chatgpt-backup-help">
+            <p id="chatgpt-backup-help">Use a different label for each account/workspace. Uses your ChatGPT login in this Chrome profile. No ChatGPT tab or extension panel needs to stay open. If signed out, sign in at chatgpt.com; archiving retries automatically. To change accounts, disable archiving and save before changing the label.</p>
             <label for="chatgpt-request-interval">Minimum request interval (seconds)</label>
             <input id="chatgpt-request-interval" name="request-interval" type="number" min="0.5" max="30" step="0.5" value="2" required aria-describedby="chatgpt-rate-help">
             <label for="chatgpt-max-backoff">Maximum retry backoff (minutes)</label>
             <input id="chatgpt-max-backoff" name="max-backoff" type="number" min="1" max="60" step="1" value="15" required aria-describedby="chatgpt-rate-help">
-            <p id="chatgpt-rate-help">Applies to all backup requests. Repeated rate limits increase the wait. ChatGPT's Retry-After is always honored, even when longer than this maximum. Saving or Sync will not shorten an active cooldown.</p>
+            <p id="chatgpt-rate-help">Applies to all backup requests. Repeated rate limits increase the wait. ChatGPT's Retry-After is always honored, even when longer than this maximum. Saving settings will not shorten an active cooldown.</p>
             <button type="submit">Save backup settings</button>
             <p id="chatgpt-rate-settings-status" role="status"></p>
           </fieldset>

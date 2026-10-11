@@ -26,14 +26,14 @@ func TestSettingsAPI(t *testing.T) {
 		}
 		return res.Body.String()
 	}
-	body := `{"port":9876,"archive_root":"~/custom-archive"}`
+	body := `{"port":9876,"archive_root":"~/custom-archive","chatgpt_root":"~/my-chats"}`
 	request("PUT", body, "https://evil.example", "application/json", 403)
 	request("PUT", body, "", "text/plain", 415)
 	request("PUT", strings.Repeat(" ", 4097), "", "application/json", 400)
 	request("PUT", `{"port":-1}`, "", "application/json", 400)
 	request("PUT", body, "chrome-extension://test", "application/json", 200)
-	port, root, _, _, err := config.Read(path)
-	if err != nil || port != 9876 || root != "~/custom-archive" {
+	port, root, _, _, chatGPTRoot, err := config.Read(path)
+	if err != nil || port != 9876 || root != "~/custom-archive" || chatGPTRoot != "~/my-chats" {
 		t.Fatal("config not persisted", port, root, err)
 	}
 	result := request("GET", "", "", "", 200)

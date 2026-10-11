@@ -101,14 +101,14 @@ func TestBackfillBatchFailureProgressAndRestart(t *testing.T) {
 		t.Fatalf("failed chunk blocked progress: indexed=%d maxBatch=%d cursor=%q records=%d", count(), maxBatch, after, len(records))
 	}
 	// Simulate a process restart: no in-memory cursor survives. Only the failed
-	// chunk should be retried, and successfully indexed text must not be repeated.
+	// chunk stays parked, and successfully indexed text must not be repeated.
 	rejectBad = false
 	after = ""
 	before := calls
 	if err := backfillEmbeddings(context.Background(), workspace, model, &after); err != nil {
 		t.Fatal(err)
 	}
-	if count() != 20 || calls != before+1 {
+	if count() != 19 || calls != before {
 		t.Fatalf("restart recovery repeated/skipped work: count=%d calls=%d", count(), calls-before)
 	}
 	before = calls
@@ -117,6 +117,22 @@ func TestBackfillBatchFailureProgressAndRestart(t *testing.T) {
 	}
 	if calls != before {
 		t.Fatal("completed backfill made inference calls")
+	}
+	// Replacing the failed source removes its parked chunk and queues fresh text.
+	for name, text := range files {
+		if strings.Contains(badText, text) {
+			if err := os.WriteFile(filepath.Join(workspace.WorkTree, name), []byte("replacement passage"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	reconcileDirectories(context.Background(), config.IndexDirectories)
+	after = ""
+	if err := backfillEmbeddings(context.Background(), workspace, model, &after); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 20 || calls != before+1 {
+		t.Fatalf("edited source stayed parked: count=%d calls=%d", count(), calls-before)
 	}
 }
 

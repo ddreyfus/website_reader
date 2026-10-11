@@ -253,3 +253,9 @@ Do not equate visible sidebar discovery with a complete or current backup.
 - Any 429 pauses inventory and downloads together. Persist exponential backoff with jitter, honor longer Retry-After values, and retain cooldown when Sync is pressed or the label changes.
 - Expose minimum interval and maximum backoff in ChatGPT backup settings, and show the next retry time in the panel.
 - Bound paced download batches by their existing deadline so saved pages can yield before the job lease expires.
+
+### 2026-10-11 — Automatic archiving configuration
+
+- Removed the manual Sync and Pause buttons. Configuration now controls automatic archiving and the account/workspace label. Existing enabled state is retained.
+- Periodic discovery and downloads no longer require a user ChatGPT tab; the worker opens and closes its own inactive tab using the browser login. The extension panel can stay closed.
+- Added validated `chatgpt_root` to the existing service configuration and extension settings. The previous path remains the default for existing archives; changing it requires a service restart and does not move existing snapshots.

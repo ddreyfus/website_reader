@@ -21,6 +21,7 @@ var (
 	Port             int
 	IndexDirectories []string
 	SearchLimit      int
+	ChatGPTRoot      string
 )
 
 var IgnorePatterns = []string{
@@ -91,7 +92,7 @@ func init() {
 		ConfigPath = filepath.Join(homeDir, ".local-mcp", "config.json")
 	}
 	var archiveDir string
-	Port, archiveDir, IndexDirectories, SearchLimit, err = Read(ConfigPath)
+	Port, archiveDir, IndexDirectories, SearchLimit, ChatGPTRoot, err = Read(ConfigPath)
 	if err != nil {
 		panic(err)
 	}
@@ -104,6 +105,10 @@ func init() {
 		if err != nil {
 			panic(err)
 		}
+	}
+	ChatGPTRoot, err = ExpandArchiveRoot(ChatGPTRoot)
+	if err != nil {
+		panic(err)
 	}
 	LexDir = filepath.Join(archiveDir, "indexes")
 	WorkspacesDBPath = filepath.Join(LexDir, "workspaces.sqlite")
@@ -123,75 +128,87 @@ func ExpandArchiveRoot(root string) (string, error) {
 	return filepath.Clean(root), nil
 }
 
-func Read(path string) (int, string, []string, int, error) {
+func Read(path string) (int, string, []string, int, string, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return 8766, "~/reading-archive", []string{}, 30, nil
+		return 8766, "~/reading-archive", []string{}, 30, "~/sources/ChatGPT", nil
 	}
 	if err != nil {
-		return 0, "", nil, 0, err
+		return 0, "", nil, 0, "", err
 	}
 	return Parse(data)
 }
 
-func Parse(data []byte) (int, string, []string, int, error) {
+func Parse(data []byte) (int, string, []string, int, string, error) {
 	port, root := 8766, "~/reading-archive"
 	directories := []string{}
 	searchLimit := 30
+	chatGPTRoot := "~/sources/ChatGPT"
 	var err error
 	var values map[string]json.RawMessage
 	if err = json.Unmarshal(data, &values); err != nil {
-		return 0, "", nil, 0, err
+		return 0, "", nil, 0, "", err
 	}
 	if values == nil {
-		return 0, "", nil, 0, fmt.Errorf("configuration must be a JSON object")
+		return 0, "", nil, 0, "", fmt.Errorf("configuration must be a JSON object")
 	}
 	for key, value := range values {
 		switch key {
 		case "port":
 			if string(value) == "null" {
-				return 0, "", nil, 0, fmt.Errorf("port must be an integer")
+				return 0, "", nil, 0, "", fmt.Errorf("port must be an integer")
 			}
 			err = json.Unmarshal(value, &port)
 		case "archive_root":
 			if string(value) == "null" {
-				return 0, "", nil, 0, fmt.Errorf("archive_root must be a string")
+				return 0, "", nil, 0, "", fmt.Errorf("archive_root must be a string")
 			}
 			err = json.Unmarshal(value, &root)
 		case "index_directories":
 			if string(value) == "null" {
-				return 0, "", nil, 0, fmt.Errorf("index_directories must be an array of paths")
+				return 0, "", nil, 0, "", fmt.Errorf("index_directories must be an array of paths")
 			}
 			err = json.Unmarshal(value, &directories)
+		case "chatgpt_root":
+			if string(value) == "null" {
+				return 0, "", nil, 0, "", fmt.Errorf("chatgpt_root must be a string")
+			}
+			err = json.Unmarshal(value, &chatGPTRoot)
 		case "search_limit":
 			if string(value) == "null" {
-				return 0, "", nil, 0, fmt.Errorf("search_limit must be an integer")
+				return 0, "", nil, 0, "", fmt.Errorf("search_limit must be an integer")
 			}
 			err = json.Unmarshal(value, &searchLimit)
 		default:
-			return 0, "", nil, 0, fmt.Errorf("unknown configuration setting: %s", key)
+			return 0, "", nil, 0, "", fmt.Errorf("unknown configuration setting: %s", key)
 		}
 		if err != nil {
-			return 0, "", nil, 0, err
+			return 0, "", nil, 0, "", err
 		}
 	}
 	if port < 1 || port > 65535 {
-		return 0, "", nil, 0, fmt.Errorf("port must be between 1 and 65535")
+		return 0, "", nil, 0, "", fmt.Errorf("port must be between 1 and 65535")
 	}
 	if _, err = ExpandArchiveRoot(root); err != nil {
-		return 0, "", nil, 0, err
+		return 0, "", nil, 0, "", err
 	}
 	if err = ValidateIndexDirectories(root, directories); err != nil {
-		return 0, "", nil, 0, err
+		return 0, "", nil, 0, "", err
 	}
 	if searchLimit < 1 || searchLimit > 100 {
-		return 0, "", nil, 0, fmt.Errorf("search_limit must be between 1 and 100")
+		return 0, "", nil, 0, "", fmt.Errorf("search_limit must be between 1 and 100")
 	}
-	return port, root, directories, searchLimit, nil
+	if _, err = ExpandArchiveRoot(chatGPTRoot); err != nil {
+		return 0, "", nil, 0, "", fmt.Errorf("chatgpt_root: %w", err)
+	}
+	if err = ValidateIndexDirectories(root, []string{chatGPTRoot}); err != nil {
+		return 0, "", nil, 0, "", fmt.Errorf("chatgpt_root: %w", err)
+	}
+	return port, root, directories, searchLimit, chatGPTRoot, nil
 }
 
 // Save validates before replacing the shared file; active settings change on restart.
-func Save(path string, port int, root string, directories []string, searchLimit int) error {
+func Save(path string, port int, root string, directories []string, searchLimit int, chatGPTRoot string) error {
 	if searchLimit < 1 || searchLimit > 100 {
 		return fmt.Errorf("search_limit must be between 1 and 100")
 	}
@@ -204,10 +221,16 @@ func Save(path string, port int, root string, directories []string, searchLimit 
 	if err := ValidateIndexDirectories(root, directories); err != nil {
 		return err
 	}
+	if _, err := ExpandArchiveRoot(chatGPTRoot); err != nil {
+		return fmt.Errorf("chatgpt_root: %w", err)
+	}
+	if err := ValidateIndexDirectories(root, []string{chatGPTRoot}); err != nil {
+		return fmt.Errorf("chatgpt_root: %w", err)
+	}
 	if directories == nil {
 		directories = []string{}
 	}
-	data, err := json.MarshalIndent(map[string]interface{}{"port": port, "archive_root": root, "index_directories": directories, "search_limit": searchLimit}, "", "  ")
+	data, err := json.MarshalIndent(map[string]interface{}{"port": port, "archive_root": root, "index_directories": directories, "search_limit": searchLimit, "chatgpt_root": chatGPTRoot}, "", "  ")
 	if err != nil {
 		return err
 	}

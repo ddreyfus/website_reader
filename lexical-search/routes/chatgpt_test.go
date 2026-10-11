@@ -197,6 +197,98 @@ func TestChatGPTQueueAndSnapshots(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatal("write escaped root")
 	}
+	// A deleted conversation stays failed until discovery advances its generation.
+	deletedEntry := map[string]interface{}{"id": "deleted", "title": "Deleted", "updated_at": "2026-10-09T18:00:00Z"}
+	deletedDiscovery := map[string]interface{}{"scope": "deleted", "conversations": []map[string]interface{}{deletedEntry}}
+	call("discover", deletedDiscovery, 200)
+	deletedJob := call("claim", map[string]interface{}{"scope": "deleted"}, 200)["job"].(map[string]interface{})
+	deletedJob["scope"] = "deleted"
+	deletedJob["error"] = "ChatGPT conversation returned HTTP 404. Endpoint unavailable"
+	call("fail", deletedJob, 200)
+	call("discover", deletedDiscovery, 200)
+	if call("claim", map[string]interface{}{"scope": "deleted"}, 200)["job"] != nil {
+		t.Fatal("unchanged deleted conversation was retried")
+	}
+	var parked, unsaved int
+	db.Get(&parked, "SELECT retry_at FROM chatgpt_conversations WHERE scope='deleted'")
+	db.Get(&unsaved, "SELECT saved_generation FROM chatgpt_conversations WHERE scope='deleted'")
+	if parked != -1 || unsaved != 0 {
+		t.Fatal("deleted failure was not parked or was marked saved", parked, unsaved)
+	}
+	statusResponse := httptest.NewRecorder()
+	router.ServeHTTP(statusResponse, httptest.NewRequest("GET", "/api/v1/chatgpt/status?scope=deleted", nil))
+	var status struct {
+		Conversations []struct {
+			RetryAt int64 `json:"retry_at"`
+		} `json:"conversations"`
+	}
+	if err := json.Unmarshal(statusResponse.Body.Bytes(), &status); err != nil || statusResponse.Code != 200 || len(status.Conversations) != 1 || status.Conversations[0].RetryAt != -1 {
+		t.Fatal("status omitted parked retry state", statusResponse.Body.String(), err)
+	}
+	deletedEntry["updated_at"] = "2026-10-09T19:00:00Z"
+	call("discover", deletedDiscovery, 200)
+	if call("claim", map[string]interface{}{"scope": "deleted"}, 200)["job"] == nil {
+		t.Fatal("changed deleted conversation remained parked")
+	}
+
+	// Confirmed deletion removes files and partial pages without affecting neighbors.
+	deletedDir := filepath.Join(root, "deleted", "conversations", "deleted")
+	if err := chatGPTDirectory(deletedDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := chatGPTWrite(filepath.Join(deletedDir, "conversation.md"), []byte("deletedconversationuniquetoken")); err != nil {
+		t.Fatal(err)
+	}
+	reconcileDirectories(context.Background(), config.IndexDirectories)
+	beforeDeletion := httptest.NewRecorder()
+	beforeRequest := httptest.NewRequest("POST", "/api/v1/archive/search", strings.NewReader(`{"query":"deletedconversationuniquetoken"}`))
+	beforeRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(beforeDeletion, beforeRequest)
+	if beforeDeletion.Code != 200 || !strings.Contains(beforeDeletion.Body.String(), "deletedconversationuniquetoken") {
+		t.Fatal("deletion fixture was not indexed", beforeDeletion.Body.String())
+	}
+	db.Exec("INSERT INTO chatgpt_pages(scope,id,generation,cursor,body) VALUES('deleted','deleted',2,'','{}')")
+	var lease string
+	db.Get(&lease, "SELECT lease FROM chatgpt_conversations WHERE scope='deleted'")
+	call("fail", map[string]interface{}{"scope": "deleted", "id": "deleted", "lease": lease, "error": "ChatGPT conversation returned HTTP 404. error=conversation_deleted"}, 200)
+	if _, err := os.Stat(deletedDir); !os.IsNotExist(err) {
+		t.Fatal("deleted transcript retained", err)
+	}
+	var remaining int
+	db.Get(&remaining, "SELECT (SELECT COUNT(*) FROM chatgpt_conversations WHERE scope='deleted')+(SELECT COUNT(*) FROM chatgpt_pages WHERE scope='deleted')")
+	if remaining != 0 {
+		t.Fatal("deleted database entries retained", remaining)
+	}
+	reconcileDirectories(context.Background(), config.IndexDirectories)
+	removedSearch := httptest.NewRecorder()
+	removedRequest := httptest.NewRequest("POST", "/api/v1/archive/search", strings.NewReader(`{"query":"deletedconversationuniquetoken"}`))
+	removedRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(removedSearch, removedRequest)
+	if removedSearch.Code != 200 || strings.Contains(removedSearch.Body.String(), "deletedconversationuniquetoken") {
+		t.Fatal("deleted content remained searchable", removedSearch.Code, removedSearch.Body.String())
+	}
+
+	// Startup also removes confirmed failures parked by older service versions.
+	if err := chatGPTDirectory(deletedDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := chatGPTWrite(filepath.Join(deletedDir, "export.json"), []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO chatgpt_conversations(scope,id,title,url,retry_at,error) VALUES('deleted','deleted','Deleted','https://chatgpt.com/c/deleted',-1,'ChatGPT conversation returned HTTP 404. error=conversation_deleted')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterChatGPTHandlers(gin.New(), db, root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(deletedDir); !os.IsNotExist(err) {
+		t.Fatal("startup retained deleted export", err)
+	}
+	db.Get(&remaining, "SELECT COUNT(*) FROM chatgpt_conversations WHERE scope='deleted'")
+	if remaining != 0 {
+		t.Fatal("startup retained deleted queue entry")
+	}
+
 	// A failed low-ID job must not starve untouched conversations.
 	call("discover", map[string]interface{}{"scope": "fair", "checkpoint": map[string]interface{}{"complete": true}, "conversations": []map[string]interface{}{{"id": "a", "title": "Retry"}, {"id": "b", "title": "Untouched"}}}, 200)
 	failedJob := call("claim", map[string]interface{}{"scope": "fair"}, 200)["job"].(map[string]interface{})
@@ -258,6 +350,18 @@ func TestChatGPTQueueAndSnapshots(t *testing.T) {
 	call("discover", pagedDiscovery, 200)
 	if call("claim", map[string]interface{}{"scope": "paged"}, 200)["job"] != nil {
 		t.Fatal("unchanged remote timestamp requeued")
+	}
+	pagedEntry["updated_at"] = "2026-10-09T18:00:00.000Z"
+	call("discover", pagedDiscovery, 200)
+	if call("claim", map[string]interface{}{"scope": "paged"}, 200)["job"] != nil {
+		t.Fatal("timestamp formatting requeued saved content")
+	}
+	pagedEntry["updated_at"] = "2026-10-09T17:00:00Z"
+	call("discover", pagedDiscovery, 200)
+	var retainedTimestamp string
+	db.Get(&retainedTimestamp, "SELECT remote_updated_at FROM chatgpt_conversations WHERE scope='paged'")
+	if retainedTimestamp != "2026-10-09T18:00:00Z" || call("claim", map[string]interface{}{"scope": "paged"}, 200)["job"] != nil {
+		t.Fatal("older inventory requeued saved content or lowered timestamp", retainedTimestamp)
 	}
 	pagedEntry["updated_at"] = "2026-10-09T19:00:00Z"
 	call("discover", pagedDiscovery, 200)

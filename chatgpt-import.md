@@ -18,7 +18,7 @@ configured local service port; `--port` overrides it. It supports both
 `conversations.json` and sharded exports with `export_manifest.json`.
 
 Each conversation updates the existing SQLite backup row and its stable archive
-directory under `~/sources/ChatGPT/<scope>/conversations/<id>/`. Existing project
+directory under `<chatgpt_root>/<scope>/conversations/<id>/`. Existing project
 assignments are preserved. A busy browser backup is skipped and reported; rerun
 after it finishes. Repeated imports are idempotent: unchanged files, database
 timestamps, generations, and pending refreshes remain unchanged.
@@ -38,7 +38,7 @@ removing the export tree or its alternate messages.
 If newer inventory exists but has never been downloaded, the export supplies a
 fallback transcript and the newer browser generation remains pending for sync.
 
-Add `~/sources/ChatGPT` to the archive's directories to index. The normal watcher
+Choose **ChatGPT archive folder** in local archive settings (`chatgpt_root`, default `~/sources/ChatGPT`). Add that folder to the archive's directories to index. The normal watcher
 indexes the Markdown files and updates search automatically. The import does not
 mark browser inventory discovery complete or delete conversations absent from
 the export. Each conversation commits separately; rerun after any interruption.

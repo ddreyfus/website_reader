@@ -349,7 +349,7 @@ test('Sync and account-label changes retain the shared cooldown', async () => {
   const until = local.chatGPTBackupRetryAt;
   const context = vm.createContext({ chrome: {
     runtime: { getURL: path => `chrome-extension://test/${path}` },
-    tabs: { onUpdated: events }, alarms: { onAlarm: events, async create() {} },
+    tabs: { onUpdated: events }, alarms: { onAlarm: events, async create() {}, async clear() {} },
     storage: { local: { async get() { return { ...local }; }, async set(value) { Object.assign(local, value); } } }
   } });
   vm.runInContext(source, context);
@@ -359,6 +359,13 @@ test('Sync and account-label changes retain the shared cooldown', async () => {
   assert.equal(local.chatGPTBackupScope, 'new');
   assert.equal(local.chatGPTBackupRetryAt, until);
   assert.equal(local.chatGPTRateLimitCount, 3);
+  context.chatGPTBackupProgress = async () => {};
+  const save = message => new Promise(resolve => context.handleChatGPTBackup(message, { url: 'chrome-extension://test/popup.html' }, resolve));
+  assert.equal((await save({ action: 'pause', scope: 'new' })).ok, true);
+  assert.equal((await save({ action: 'pause', scope: 'configured-while-disabled' })).ok, true);
+  assert.equal(local.chatGPTBackupScope, 'configured-while-disabled');
+  assert.equal(local.chatGPTBackupEnabled, false);
+  assert.equal(local.chatGPTBackupRetryAt, until);
 });
 
 test('backoff grows across rate limits, caps client delay, and honors longer Retry-After', async () => {
@@ -400,7 +407,7 @@ test('worker resumes pages on the same tab and shares rate-limit cooldown across
   const local = { chatGPTBackupEnabled: true, chatGPTBackupScope: 'scope' }, session = {}, actions = [], reads = [];
   let downloaded = false, claims = 0, locked = false;
   const context = vm.createContext({ URL, AbortSignal, setTimeout: fn => fn(), navigator: { locks: { async request(name, options, fn) { assert.equal(name, "chatgpt-backup"); assert.equal(options.ifAvailable, true); if (locked) return fn(null); locked = true; try { await fn({}); } finally { locked = false; } } } }, chrome: {
-    tabs: { onUpdated: events, async query() { return [{ id: 10, url: 'https://chatgpt.com/' }]; }, async create(options) { assert.equal(options.active, false); return { id: 20 }; }, async get() { return { status: 'complete', url: 'https://chatgpt.com/' }; }, async remove() {} },
+    tabs: { onUpdated: events, async query() { assert.fail('Backup must not require an existing ChatGPT tab'); }, async create(options) { assert.equal(options.active, false); return { id: 20 }; }, async get() { return { status: 'complete', url: 'https://chatgpt.com/' }; }, async remove() {} },
     alarms: { onAlarm: events }, permissions: { async contains() { return true; } },
     storage: { local: { async get() { return local; }, async set(data) { Object.assign(local, data); } }, session: { async get() { return session; }, async set(data) { Object.assign(session, data); }, async remove(key) { delete session[key]; } } }
   } });
@@ -418,6 +425,7 @@ test('worker resumes pages on the same tab and shares rate-limit cooldown across
   };
   await context.chatGPTBackupRun();
   assert.equal(claims, 2);
+  assert.equal(local.chatGPTBackupProgress, "Idle: no conversation download is ready.");
   assert.deepEqual(reads, [['identity', ''], ['conversation', ''], ['conversation', 'older'], ['conversation', ''], ['conversation', 'older']]);
   assert.ok(actions.includes('complete'));
   assert.ok(local.chatGPTBackupSavedAt);
@@ -483,19 +491,22 @@ test('backup summary distinguishes durable backups from mutually exclusive queue
   let summary;
   const context = vm.createContext({
     async chatGPTArchive() { return { root: '/archive', conversations: [
-      { title: 'Current', saved_at: 1, generation: 1, saved_generation: 1 },
+      { title: 'Current', saved_at: 1, generation: 1, saved_generation: 1, error: 'Superseded failure' },
       { title: 'Refresh', saved_at: 1, generation: 2, saved_generation: 1 },
       { title: 'New', generation: 1, saved_generation: 0 },
       { title: 'Fetching', generation: 1, saved_generation: 0, lease_until: Date.now() / 1000 + 60, error: 'Prior error' },
-      { title: 'Retry', generation: 1, saved_generation: 0, error: 'No supported messages' }
+      { title: 'Retry', generation: 1, saved_generation: 0, retry_at: Date.now() / 1000 + 60, error: 'No supported messages' },
+      { title: 'Deleted', generation: 1, saved_generation: 0, retry_at: -1, error: 'Deleted conversation' },
+      { title: 'Changed', generation: 2, saved_generation: 0, retry_at: -1, error: 'Old failure' }
     ] }; },
     chrome: { storage: { local: { async set(value) { summary = value.chatGPTBackupSummary; } } } }
   });
   vm.runInContext(source.slice(source.indexOf('async function chatGPTBackupCounts('), source.indexOf('async function chatGPTBackupActive(')), context);
   await context.chatGPTBackupCounts('account');
-  assert.match(summary, /5 known · 2 have backups · 3 have no backup/);
-  assert.match(summary, /1 first backups · 1 refreshes · 1 fetching · 1 awaiting retry/);
+  assert.match(summary, /7 known · 2 have backups · 5 have no backup/);
+  assert.match(summary, /2 first backups · 1 refreshes · 1 fetching · 1 awaiting retry · 1 parked until discovery changes/);
   assert.match(summary, /Retry: No supported messages/);
+  assert.doesNotMatch(summary, /Superseded failure/);
   assert.match(summary, /Inventory: incomplete; discovered conversations can download/);
 });
 
@@ -529,10 +540,11 @@ test('automatic discovery persists requests, coalesces navigation, and ignores o
   now += 300001;
   await listeners.alarm({ name: 'chatgpt-backup' });
   assert.equal(local.chatGPTBackupRequestedAt, now);
-  // No eligible user tab: periodic discovery must not feed on the worker tab.
+  // Periodic discovery works with no user tabs; owned-tab events remain ignored.
   now += 300001;
-  tabs = [{ id: 20, url: 'https://chatgpt.com/' }];
-  assert.equal(await context.chatGPTBackupAutoRequest(), false);
+  tabs = [];
+  assert.equal(await context.chatGPTBackupAutoRequest(), true);
+  assert.equal(local.chatGPTBackupRequestedAt, now);
   tabs = [{ id: 10, url: 'https://example.com/' }];
   assert.equal(await context.chatGPTBackupAutoRequest(), false);
   local.chatGPTBackupEnabled = false;
@@ -552,6 +564,7 @@ test('backup preview controls load in the real extension panel', async () => {
     const page = await context.newPage();
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
     await page.locator('#chatgpt-backup > summary').click();
+    await page.locator('#archive-settings > summary').click();
     await page.getByLabel('Account and workspace label', { exact: true }).fill('personal');
     const scopeInput = page.getByLabel('Account and workspace label', { exact: true });
     await scopeInput.fill('work_account-1');
@@ -559,12 +572,12 @@ test('backup preview controls load in the real extension panel', async () => {
     await scopeInput.fill('invalid scope');
     assert.equal(await scopeInput.evaluate(e => e.validity.patternMismatch), true);
     await scopeInput.fill('personal');
-    assert.equal(await page.getByRole('button', { name: 'Sync conversations', exact: true }).isVisible(), true);
+    assert.equal(await page.getByRole('button', { name: 'Sync conversations', exact: true }).count(), 0);
+    assert.equal(await page.getByLabel('Archive ChatGPT conversations automatically').isVisible(), true);
     assert.equal(await page.locator('#chatgpt-export-import').evaluate(e => e.open), false);
     assert.equal(await page.locator('#chatgpt-backup #chatgpt-export-import').count(), 0);
     await page.getByText('Import from export', { exact: true }).click();
     await page.getByLabel('Import account and workspace label', { exact: true }).fill('personal');
-    await page.locator('#archive-settings > summary').click();
     assert.equal(await page.locator('#archive-settings #chatgpt-rate-settings').count(), 1);
     const process = page.getByRole('button', { name: 'Process', exact: true });
     assert.equal(await process.isDisabled(), true);
@@ -614,7 +627,21 @@ test('backup preview controls load in the real extension panel', async () => {
     await page.getByText('Backup settings saved. Active cooldowns are retained.', { exact: true }).waitFor();
     assert.equal(await worker.evaluate(async () => (await chrome.storage.local.get('chatGPTBackupRetryAt')).chatGPTBackupRetryAt), cooldown);
     await page.locator('#chatgpt-backup-cooldown').filter({ hasText: 'next retry no earlier than' }).waitFor();
-    await page.getByRole('button', { name: 'Pause backup', exact: true }).click();
+    // Save the automatic mode without bypassing cooldown, then close the panel.
+    await page.evaluate(() => { chrome.permissions.request = async () => true; });
+    await page.getByLabel('Archive ChatGPT conversations automatically').check();
+    await page.getByRole('button', { name: 'Save backup settings', exact: true }).click();
+    await page.waitForFunction(async () => (await chrome.storage.local.get('chatGPTBackupEnabled')).chatGPTBackupEnabled === true);
+    const panelURL = page.url();
+    await page.goto('about:blank');
+    assert.equal(await worker.evaluate(async () => !!await chrome.alarms.get('chatgpt-backup')), true);
+    assert.equal(await worker.evaluate(async () => (await chrome.storage.local.get('chatGPTBackupRetryAt')).chatGPTBackupRetryAt), cooldown);
+    await page.goto(panelURL);
+    await page.locator('#archive-settings > summary').click();
+    await page.locator('#chatgpt-backup > summary').click();
+    assert.equal(await page.getByLabel('Archive ChatGPT conversations automatically').isChecked(), true);
+    await page.getByLabel('Archive ChatGPT conversations automatically').uncheck();
+    await page.getByRole('button', { name: 'Save backup settings', exact: true }).click();
     await page.getByText('Paused. Saved snapshots and queued conversations are retained.', { exact: true }).waitFor();
     assert.equal(await worker.evaluate(async () => (await chrome.storage.local.get('chatGPTBackupEnabled')).chatGPTBackupEnabled), false);
     await worker.evaluate(async () => chrome.storage.local.set({

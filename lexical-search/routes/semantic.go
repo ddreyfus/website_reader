@@ -111,7 +111,7 @@ func ensureEmbeddingMapping(index bleve.Index) error {
 	if doc == nil {
 		return fmt.Errorf("missing slidingChunk mapping")
 	}
-	if doc.Properties["embedding"] != nil && mapping.DefaultMapping.Properties["embedding"] != nil {
+	if doc.Properties["embedding"] != nil && mapping.DefaultMapping.Properties["embedding"] != nil && doc.Properties["embedding_failed"] != nil && mapping.DefaultMapping.Properties["embedding_failed"] != nil {
 		return nil
 	}
 	vector := bleve.NewVectorFieldMapping()
@@ -120,6 +120,8 @@ func ensureEmbeddingMapping(index bleve.Index) error {
 	mapping.DefaultMapping.AddFieldMappingsAt("embedding", vector)
 	keyword := bleve.NewKeywordFieldMapping()
 	keyword.IncludeInAll = false
+	doc.AddFieldMappingsAt("embedding_failed", keyword)
+	mapping.DefaultMapping.AddFieldMappingsAt("embedding_failed", keyword)
 	doc.AddFieldMappingsAt("embedding_model", keyword)
 	mapping.DefaultMapping.AddFieldMappingsAt("embedding_model", keyword)
 	if err := mapping.Validate(); err != nil {
@@ -132,7 +134,8 @@ func ensureEmbeddingMapping(index bleve.Index) error {
 	return index.SetInternal([]byte("_mapping"), data)
 }
 
-// One bounded batch per workspace per pass; failed batches retry on the next pass.
+// One bounded batch per workspace per pass; transient failures retry on the next pass.
+// Rejected inputs are parked on their chunk for this model; source edits replace them.
 // Source edits replace chunk IDs. Verify IDs and stored text again after inference
 // so an in-flight embedding cannot resurrect deleted or edited passages.
 func backfillEmbeddings(ctx context.Context, workspace archive.WorkspaceRecord, model string, after *string) error {
@@ -155,6 +158,9 @@ func backfillEmbeddings(ctx context.Context, workspace archive.WorkspaceRecord, 
 		query := bleve.NewBooleanQuery()
 		query.AddMust(bleve.NewMatchAllQuery())
 		query.AddMustNot(modelQuery(model))
+		failed := bleve.NewTermQuery(model)
+		failed.SetField("embedding_failed")
+		query.AddMustNot(failed)
 		request := bleve.NewSearchRequestOptions(query, 16, 0, false)
 		request.Fields = []string{"path", "text", "lineStart", "lineEnd"}
 		request.SortBy([]string{"_id"})
@@ -178,6 +184,7 @@ func backfillEmbeddings(ctx context.Context, workspace archive.WorkspaceRecord, 
 	for i, hit := range hits.Hits {
 		texts[i] = "title: " + fmt.Sprint(hit.Fields["path"]) + " | text: " + fmt.Sprint(hit.Fields["text"])
 	}
+	failed := make([]bool, len(texts))
 	vectors, err := embedTexts(ctx, texts)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -190,7 +197,11 @@ func backfillEmbeddings(ctx context.Context, workspace archive.WorkspaceRecord, 
 		for i, text := range texts {
 			one, err := embedTexts(ctx, []string{text})
 			if err != nil {
-				log.Printf("semantic_embedding chunk=%s error=%v", hits.Hits[i].ID, err)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				failed[i] = errors.Is(err, errEmbeddingInput)
+				log.Printf("semantic_embedding chunk=%s parked=%t error=%v", hits.Hits[i].ID, failed[i], err)
 				continue
 			}
 			vectors[i] = one[0]
@@ -212,8 +223,9 @@ func backfillEmbeddings(ctx context.Context, workspace archive.WorkspaceRecord, 
 	}
 	defer index.Close()
 	batch := index.NewBatch()
+	parked := 0
 	for i, hit := range hits.Hits {
-		if len(vectors[i]) == 0 {
+		if len(vectors[i]) == 0 && !failed[i] {
 			continue
 		}
 		request := bleve.NewSearchRequest(bleve.NewDocIDQuery([]string{hit.ID}))
@@ -225,7 +237,12 @@ func backfillEmbeddings(ctx context.Context, workspace archive.WorkspaceRecord, 
 		if len(current.Hits) != 1 || !reflect.DeepEqual(current.Hits[0].Fields, hit.Fields) {
 			continue
 		}
-		hit.Fields["embedding"], hit.Fields["embedding_model"] = vectors[i], model
+		if failed[i] {
+			hit.Fields["embedding_failed"] = model
+			parked++
+		} else {
+			hit.Fields["embedding"], hit.Fields["embedding_model"] = vectors[i], model
+		}
 		if err := batch.Index(hit.ID, hit.Fields); err != nil {
 			return err
 		}
@@ -233,7 +250,7 @@ func backfillEmbeddings(ctx context.Context, workspace archive.WorkspaceRecord, 
 	if err := index.Batch(batch); err != nil {
 		return err
 	}
-	log.Printf("semantic_backfill workspace=%s indexed=%d pending_at_scan=%d", workspace.Id, batch.Size(), hits.Total)
+	log.Printf("semantic_backfill workspace=%s indexed=%d parked=%d pending_at_scan=%d", workspace.Id, batch.Size()-parked, parked, hits.Total)
 	return nil
 }
 

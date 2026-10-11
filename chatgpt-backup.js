@@ -270,8 +270,6 @@ async function chatGPTBackupRun(discover = false) {
     }
     if (!await chrome.permissions.contains({ origins: ["https://chatgpt.com/*"] })) return;
     const { chatGPTBackupTabId: orphan } = await chrome.storage.session.get("chatGPTBackupTabId");
-    const sessions = await chrome.tabs.query({ url: "https://chatgpt.com/*" });
-    if (!sessions.some(tab => tab.id !== orphan)) { await chatGPTBackupProgress("Waiting: open ChatGPT in your signed-in browser."); return; }
     let tab;
     try {
       let { checkpoint, projects } = await chatGPTArchive(`checkpoint?scope=${encodeURIComponent(scope)}`);
@@ -312,7 +310,7 @@ async function chatGPTBackupRun(discover = false) {
       for (let conversation = 0; conversation < 10 && Date.now() < deadline; conversation++) {
         if (!await chatGPTBackupActive(scope)) break;
         const { job } = await chatGPTArchive("claim", { scope });
-        if (!job) { await chatGPTBackupCounts(scope); await chatGPTBackupProgress("Idle: inventory finished; no conversation download is ready. Retries remain scheduled."); return; }
+        if (!job) { await chatGPTBackupCounts(scope); await chatGPTBackupProgress("Idle: no conversation download is ready."); return; }
         let progress;
         try {
           progress = await chatGPTArchive("pages", { scope, ...job });
@@ -379,17 +377,18 @@ async function chatGPTBackupProgress(message) {
 async function chatGPTBackupCounts(scope) {
   const status = await chatGPTArchive(`status?scope=${encodeURIComponent(scope)}`);
   const saved = status.conversations.filter(item => item.saved_at).length;
-  let first = 0, refresh = 0, fetching = 0, retry = 0;
+  let first = 0, refresh = 0, fetching = 0, retry = 0, parked = 0;
   for (const item of status.conversations) {
     if (item.generation <= item.saved_generation) continue;
     if (item.lease_until > Date.now() / 1000) fetching++;
-    else if (item.error) retry++;
+    else if (item.retry_at < 0 && -item.retry_at >= item.generation) parked++;
+    else if (item.error && !(item.retry_at < 0)) retry++;
     else if (item.saved_at) refresh++;
     else first++;
   }
-  const unsuccessful = status.conversations.filter(item => item.error);
+  const unsuccessful = status.conversations.filter(item => item.error && item.generation > item.saved_generation);
   const errors = unsuccessful.slice(0, 3).map(item => `${item.title}: ${item.error}`).join("\n");
-  await chrome.storage.local.set({ chatGPTBackupSummary: `${status.conversations.length} known · ${saved} have backups · ${status.conversations.length - saved} have no backup.\nQueue: ${first} first backups · ${refresh} refreshes · ${fetching} fetching · ${retry} awaiting retry.\nInventory: ${status.inventory_complete ? "reported lists complete" : status.inventory_completed_at > 0 ? "refresh pending; existing queue continues" : "incomplete; discovered conversations can download"}. Destination: ${status.root}${errors ? `\nLast unsuccessful attempts:\n${errors}${unsuccessful.length > 3 ? `\nAnd ${unsuccessful.length - 3} more.` : ""}` : ""}` });
+  await chrome.storage.local.set({ chatGPTBackupSummary: `${status.conversations.length} known · ${saved} have backups · ${status.conversations.length - saved} have no backup.\nQueue: ${first} first backups · ${refresh} refreshes · ${fetching} fetching · ${retry} awaiting retry · ${parked} parked until discovery changes.\nInventory: ${status.inventory_complete ? "reported lists complete" : status.inventory_completed_at > 0 ? "refresh pending; existing queue continues" : "incomplete; discovered conversations can download"}. Destination: ${status.root}${errors ? `\nUnresolved failures:\n${errors}${unsuccessful.length > 3 ? `\nAnd ${unsuccessful.length - 3} more.` : ""}` : ""}` });
 }
 
 async function chatGPTBackupActive(scope) {
@@ -400,16 +399,18 @@ async function chatGPTBackupActive(scope) {
 function handleChatGPTBackup(message, sender, sendResponse) {
   if (sender.url !== chrome.runtime.getURL("popup.html")) { sendResponse({ ok: false, error: "Use the backup controls." }); return; }
   (async () => {
+    if (!["sync", "pause"].includes(message.action)) throw new Error("Unknown backup action.");
+    if (message.action === "sync" || message.scope) {
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(message.scope || "")) throw new Error("Enter an account/workspace label using letters, numbers, hyphens, or underscores.");
+      const current = await chrome.storage.local.get(["chatGPTBackupScope", "chatGPTBackupEnabled"]);
+      if (current.chatGPTBackupEnabled && current.chatGPTBackupScope !== message.scope) throw new Error("Disable archiving and save before changing the account/workspace label.");
+      if (current.chatGPTBackupScope !== message.scope) await chrome.storage.local.set({ chatGPTBackupScope: message.scope, chatGPTBackupSummary: "", chatGPTBackupSavedAt: null, chatGPTBackupFullDiscoveryAt: null, chatGPTInventoryRetryAt: 0 });
+    }
     if (message.action === "pause") {
       await chrome.storage.local.set({ chatGPTBackupEnabled: false });
       await chrome.alarms.clear("chatgpt-backup");
       await chatGPTBackupProgress("Paused. Saved snapshots and queued conversations are retained.");
     } else {
-      if (message.action !== "sync") throw new Error("Unknown backup action.");
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(message.scope || "")) throw new Error("Enter an account/workspace label using letters, numbers, hyphens, or underscores.");
-      const current = await chrome.storage.local.get(["chatGPTBackupScope", "chatGPTBackupEnabled"]);
-      if (current.chatGPTBackupEnabled && current.chatGPTBackupScope !== message.scope) throw new Error("Pause backup before changing the account/workspace label.");
-      if (current.chatGPTBackupScope !== message.scope) await chrome.storage.local.set({ chatGPTBackupSummary: "", chatGPTBackupSavedAt: null, chatGPTBackupFullDiscoveryAt: null, chatGPTInventoryRetryAt: 0 });
       await chrome.storage.local.set({ chatGPTBackupScope: message.scope, chatGPTBackupEnabled: true, chatGPTBackupRequestedAt: Date.now() });
       await chrome.alarms.create("chatgpt-backup", { periodInMinutes: 0.5 });
       // The work continues after returning to the panel or switching tabs.
@@ -423,8 +424,7 @@ async function chatGPTBackupAutoRequest(tab) {
   const settings = await chrome.storage.local.get(["chatGPTBackupEnabled", "chatGPTBackupRequestedAt", "chatGPTBackupDiscoveredAt"]);
   if (!settings.chatGPTBackupEnabled) return false;
   const { chatGPTBackupTabId } = await chrome.storage.session.get("chatGPTBackupTabId");
-  const tabs = tab ? [tab] : await chrome.tabs.query({ url: "https://chatgpt.com/*" });
-  if (!tabs.some(item => item.id !== chatGPTBackupTabId && item.url?.startsWith("https://chatgpt.com/"))) return false;
+  if (tab && (tab.id === chatGPTBackupTabId || !tab.url?.startsWith("https://chatgpt.com/"))) return false;
   // Persist the request before attempting the lock so a busy/suspended worker
   // leaves it for the next alarm. Coalesce navigation and periodic checks.
   if (Date.now() - Math.max(settings.chatGPTBackupRequestedAt || 0, settings.chatGPTBackupDiscoveredAt || 0) < 5 * 60 * 1000) return false;

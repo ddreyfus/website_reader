@@ -201,11 +201,17 @@ To import a native account export, see [Import a ChatGPT export](chatgpt-import.
 The importer preserves the full conversation tree and indexes alternate messages.
 
 The side panel's **ChatGPT conversation backup (preview)** saves conversation
-JSON pages and readable Markdown through the local service. Open ChatGPT while
-signed in, enter a distinct account/workspace label, and select **Sync conversations**.
+JSON pages and readable Markdown through the local service. In **Local archive settings**,
+load the service settings and choose the **ChatGPT archive folder**. Save and restart
+the service to apply a changed folder for future saves; existing files are not moved. Under
+**ChatGPT archiving**, enter a distinct account/workspace label, check
+**Archive ChatGPT conversations automatically**, and save the backup settings.
+Chrome and the local service must be running. The extension panel and user ChatGPT
+tabs can stay closed; an inactive temporary tab uses this Chrome profile’s login
+and closes after each batch. If signed out, sign in at chatgpt.com; retries are automatic.
 The label is bound to the observed session user/workspace identity; a mismatch
 stops the run. Tokens remain in the ChatGPT page and are never sent to the local
-service. Pause retains saved files, partial pages, and queued work.
+service. Disabling archiving retains saved files, partial pages, and queued work.
 
 One inactive owned tab runs two sequential activities:
 
@@ -232,14 +238,14 @@ the interval. Any HTTP 429 pauses both inventory and downloads using a persisted
 shared cooldown. Repeated limits double the delay with up to 10% jitter, capped
 by the configured maximum, while a longer `Retry-After` always takes precedence.
 The streak resets after successful backend requests at least five minutes beyond
-the last cooldown. The panel shows the next retry time. Sync and settings changes
+the last cooldown. The panel shows the next retry time. Settings changes
 do not shorten an active cooldown.
 
-Enabled backup requests inventory checks every five minutes while a user ChatGPT
-page is open. Alarms resume unfinished inventory or conversation pages every
+Enabled backup requests inventory checks every five minutes, including when all
+user ChatGPT tabs are closed. Alarms resume unfinished inventory or conversation pages every
 30 seconds. Switching active tabs or closing the panel does not change the fetch
 target. Jobs use recoverable leases; failed conversations back off while other
-eligible conversations can proceed. HTTP 429 respects Retry-After (60–3600 seconds).
+eligible conversations can proceed. HTTP 429 pauses all backup requests for the shared cooldown.
 Remote update timestamps drive requeueing; conversations lacking timestamps use
 a daily age-based recheck. An unchanged observation creates no new job.
 
@@ -260,10 +266,11 @@ retry timing, request status, and duration. It does not log snapshot bodies or
 lease tokens. Run the existing service installation scripts to apply the
 supervisor when upgrading an older LaunchAgent.
 
-Snapshots are stored under:
+The configurable `chatgpt_root` service setting defaults to `~/sources/ChatGPT`
+for compatibility with existing backups. Snapshots are stored under:
 
 ```text
-~/sources/ChatGPT/<account-workspace-label>/conversations/<conversation-id>/
+<chatgpt_root>/<account-workspace-label>/conversations/<conversation-id>/
   conversation.md
   <content-hash>.json
 ```
@@ -277,7 +284,7 @@ rewrite files. The queue/inventory tables live in the service's existing
 `workspaces.sqlite` beneath the configured archive's indexes directory. Back up
 that database along with source files if you need to preserve queue metadata.
 
-Add `~/sources/ChatGPT` to **Directories to index** in local archive settings (or
+Add your configured ChatGPT archive folder to **Directories to index** in local archive settings (or
 use an existing enclosing watched root), save, and restart the service to make
 Markdown snapshots searchable through existing archive search and MCP tools.
 Saving and indexing are separate operations. The preview does not add a new

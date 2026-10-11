@@ -270,7 +270,7 @@ Requests accept local/extension callers and reject website origins. Request bodi
 are limited to 16 MiB; assembled page storage has a 64 MiB per-generation budget.
 Credentials never enter this service. SQLite retains partial pages and inventory
 continuations across restarts. Content lives at
-`~/sources/ChatGPT/<scope>/conversations/<id>/`; JSON is content-addressed and
+`<chatgpt_root>/<scope>/conversations/<id>/` (configured in local archive settings; defaults to `~/sources/ChatGPT`); JSON is content-addressed and
 `conversation.md` is replaced atomically. Unchanged content is not rewritten;
 symlink destinations are rejected. Add the source root to watched directories for
 search/MCP indexing. Internal API compatibility, branch and attachment coverage,

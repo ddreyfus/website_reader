@@ -40,13 +40,10 @@ func main() {
 	routes.RegisterRetrievalHandlers(router)
 	backupDB := archive.InitWorkspacesDB()
 	defer backupDB.Close()
-	home, err := os.UserHomeDir()
-	if err != nil {
+	if err := routes.RegisterChatGPTHandlers(router, backupDB, config.ChatGPTRoot); err != nil {
 		log.Fatal(err)
 	}
-	if err := routes.RegisterChatGPTHandlers(router, backupDB, filepath.Join(home, "sources", "ChatGPT")); err != nil {
-		log.Fatal(err)
-	}
+	var err error
 
 	// Add health check
 	router.GET(options.BaseURL+"/health", func(c *gin.Context) {
@@ -54,7 +51,7 @@ func main() {
 	})
 
 	if _, err := os.Stat(config.ConfigPath); os.IsNotExist(err) {
-		if err = config.Save(config.ConfigPath, config.Port, "~/reading-archive", config.IndexDirectories, config.SearchLimit); err != nil {
+		if err = config.Save(config.ConfigPath, config.Port, "~/reading-archive", config.IndexDirectories, config.SearchLimit, config.ChatGPTRoot); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -109,12 +106,12 @@ func main() {
 
 func registerConfigHandlers(router *gin.Engine, path string, activePort int) {
 	router.GET("/api/v1/config", func(c *gin.Context) {
-		port, root, directories, searchLimit, err := config.Read(path)
+		port, root, directories, searchLimit, chatGPTRoot, err := config.Read(path)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, gin.H{"port": port, "archive_root": root, "index_directories": directories, "search_limit": searchLimit, "active_port": activePort, "active_archive_root": filepath.Dir(config.LexDir), "active_index_directories": config.IndexDirectories})
+		c.JSON(200, gin.H{"port": port, "archive_root": root, "index_directories": directories, "search_limit": searchLimit, "chatgpt_root": chatGPTRoot, "active_chatgpt_root": config.ChatGPTRoot, "active_port": activePort, "active_archive_root": filepath.Dir(config.LexDir), "active_index_directories": config.IndexDirectories})
 	})
 	router.PUT("/api/v1/config", func(c *gin.Context) {
 		// JSON-only writes and extension origins prevent cross-site form submissions.
@@ -133,16 +130,16 @@ func registerConfigHandlers(router *gin.Engine, path string, activePort int) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		port, root, directories, searchLimit, err := config.Parse(data)
+		port, root, directories, searchLimit, chatGPTRoot, err := config.Parse(data)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		if err = config.Save(path, port, root, directories, searchLimit); err != nil {
+		if err = config.Save(path, port, root, directories, searchLimit, chatGPTRoot); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, gin.H{"port": port, "archive_root": root, "index_directories": directories, "search_limit": searchLimit, "restart_required": true})
+		c.JSON(200, gin.H{"port": port, "archive_root": root, "index_directories": directories, "search_limit": searchLimit, "chatgpt_root": chatGPTRoot, "restart_required": true})
 	})
 }
 

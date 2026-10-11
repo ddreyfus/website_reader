@@ -15,6 +15,7 @@ const logOutput = document.querySelector("#log");
 const archiveConnectionPort = document.querySelector("#archive-connection-port");
 const archivePort = document.querySelector("#archive-port");
 const archiveRoot = document.querySelector("#archive-root");
+const chatGPTArchiveRoot = document.querySelector("#chatgpt-archive-root");
 const archiveDirectories = document.querySelector("#archive-directories");
 const archiveSearchLimit = document.querySelector("#archive-search-limit");
 const archiveConfigStatus = document.querySelector("#archive-config-status");
@@ -43,10 +44,11 @@ archiveConnectButton.addEventListener("click", async () => {
     connectedArchivePort = port;
     archivePort.value = result.port;
     archiveRoot.value = result.archive_root;
+    chatGPTArchiveRoot.value = result.chatgpt_root || result.active_chatgpt_root || "";
     archiveDirectories.value = (result.index_directories || []).join("\n");
     archiveSearchLimit.value = result.search_limit ?? 30;
     archiveConfigFields.disabled = false;
-    archiveConfigStatus.textContent = `Connected on port ${result.active_port}. Active archive: ${result.active_archive_root}.`;
+    archiveConfigStatus.textContent = `Connected on port ${result.active_port}. Active archive: ${result.active_archive_root}. ChatGPT archive: ${result.active_chatgpt_root || result.chatgpt_root || "service upgrade required"}.`;
   } catch (error) {
     archiveConfigStatus.textContent = `Could not connect: ${error.message}. Check the port and start the service.`;
   } finally {
@@ -64,6 +66,7 @@ document.querySelector("#archive-config-form").addEventListener("submit", async 
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         port: archivePort.valueAsNumber, archive_root: archiveRoot.value.trim(),
+        chatgpt_root: chatGPTArchiveRoot.value.trim(),
         index_directories: archiveDirectories.value.split(/\r?\n/).map(path => path.trim()).filter(Boolean),
         search_limit: archiveSearchLimit.valueAsNumber
       })
@@ -503,6 +506,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
 loadState();
 
 
+const chatGPTBackupEnabled = document.querySelector("#chatgpt-backup-enabled");
 const chatGPTBackupScope = document.querySelector("#chatgpt-backup-scope");
 const chatGPTBackupStatus = document.querySelector("#chatgpt-backup-status");
 const chatGPTExportScope = document.querySelector("#chatgpt-export-scope");
@@ -564,6 +568,9 @@ const chatGPTMaxBackoff = document.querySelector("#chatgpt-max-backoff");
 document.querySelector("#chatgpt-rate-settings").addEventListener("submit", async event => {
   event.preventDefault();
   try {
+    if (chatGPTBackupEnabled.checked && !await chrome.permissions.request({ origins: ["https://chatgpt.com/*"] })) throw new Error("ChatGPT site access was declined.");
+    const result = await chrome.runtime.sendMessage({ type: "chatGPTBackup", action: chatGPTBackupEnabled.checked ? "sync" : "pause", scope: chatGPTBackupScope.value });
+    if (!result?.ok) throw new Error(result?.error || "Could not save archiving settings.");
     await chrome.storage.local.set({ chatGPTRequestInterval: chatGPTRequestInterval.valueAsNumber, chatGPTMaxBackoffMinutes: chatGPTMaxBackoff.valueAsNumber });
     document.querySelector("#chatgpt-rate-settings-status").textContent = "Backup settings saved. Active cooldowns are retained.";
   } catch (error) { document.querySelector("#chatgpt-rate-settings-status").textContent = error.message; }
@@ -582,11 +589,13 @@ async function restoreChatGPTBackup(restoreScope = true) {
       chatGPTBackupScope.value = saved.chatGPTBackupScope;
       chatGPTExportScope.value = saved.chatGPTBackupScope;
     }
+    chatGPTBackupEnabled.checked = !!saved.chatGPTBackupEnabled;
+    chatGPTBackupScope.required = chatGPTBackupEnabled.checked;
     chatGPTRequestInterval.value = saved.chatGPTRequestInterval ?? 2;
     chatGPTMaxBackoff.value = saved.chatGPTMaxBackoffMinutes ?? 15;
   }
   document.querySelector("#chatgpt-backup-cooldown").textContent = saved.chatGPTBackupRetryAt > Date.now()
-    ? `Rate limit cooldown: next retry no earlier than ${new Date(saved.chatGPTBackupRetryAt).toLocaleString()}.${saved.chatGPTBackupEnabled ? "" : " Backup is paused; Sync resumes it after cooldown."}` : "";
+    ? `Rate limit cooldown: next retry no earlier than ${new Date(saved.chatGPTBackupRetryAt).toLocaleString()}.${saved.chatGPTBackupEnabled ? "" : " Archiving is disabled. Enable it in Configuration to resume after cooldown."}` : "";
   if (saved.chatGPTBackupProgress) chatGPTBackupStatus.textContent = saved.chatGPTBackupProgress;
   document.querySelector("#chatgpt-backup-log").textContent = saved.chatGPTBackupLog || "No backup diagnostic events recorded yet.";
   document.querySelector("#chatgpt-backup-summary").textContent = saved.chatGPTBackupSummary || "No backup inventory loaded yet.";
@@ -596,17 +605,7 @@ async function restoreChatGPTBackup(restoreScope = true) {
   ].filter(Boolean).join(" ");
 }
 restoreChatGPTBackup().catch(error => { chatGPTBackupStatus.textContent = error.message; });
-for (const action of ["sync", "pause"]) {
-  document.querySelector(`#chatgpt-backup-${action}`).addEventListener("click", async () => {
-    try {
-      if (action === "sync" && !chatGPTBackupScope.reportValidity()) return;
-      if (action === "sync" && !await chrome.permissions.request({ origins: ["https://chatgpt.com/*"] })) throw new Error("ChatGPT site access was declined.");
-      const result = await chrome.runtime.sendMessage({ type: "chatGPTBackup", action, scope: chatGPTBackupScope.value });
-      if (!result?.ok) throw new Error(result?.error || "Backup could not start.");
-      if (action === "sync") await restoreChatGPTBackup(false);
-    } catch (error) { chatGPTBackupStatus.textContent = error.message || String(error); }
-  });
-}
+chatGPTBackupEnabled.addEventListener("change", () => { chatGPTBackupScope.required = chatGPTBackupEnabled.checked; });
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && ["chatGPTBackupProgress", "chatGPTBackupSummary", "chatGPTBackupUpdatedAt", "chatGPTBackupSavedAt", "chatGPTBackupRetryAt", "chatGPTBackupEnabled"].some(key => key in changes)) {
     restoreChatGPTBackup(false).catch(error => { chatGPTBackupStatus.textContent = error.message; });

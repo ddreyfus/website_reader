@@ -48,6 +48,28 @@ func RegisterChatGPTHandlers(router *gin.Engine, db *sqlx.DB, root string) error
 			return err
 		}
 	}
+	// Remove confirmed deletions parked by earlier service versions.
+	tx, err := db.Beginx()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for {
+		var scope, id string
+		err := tx.QueryRow(`SELECT scope,id FROM chatgpt_conversations WHERE instr(error,'ChatGPT conversation returned HTTP 404.')>0 AND instr(error,'error=conversation_deleted')>0 LIMIT 1`).Scan(&scope, &id)
+		if err == sql.ErrNoRows {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if err := chatGPTDelete(tx, root, scope, id); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
 	group := router.Group("/api/v1/chatgpt")
 	group.Use(func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
@@ -65,7 +87,7 @@ func RegisterChatGPTHandlers(router *gin.Engine, db *sqlx.DB, root string) error
 			json.Unmarshal([]byte(inventoryRaw), &inventory)
 		}
 		rows := []map[string]interface{}{}
-		result, err := db.Queryx(`SELECT id,title,project_id,url,generation,saved_generation,content_hash,saved_at,error,lease_until FROM chatgpt_conversations WHERE scope=? ORDER BY title,id`, scope)
+		result, err := db.Queryx(`SELECT id,title,project_id,url,generation,saved_generation,content_hash,saved_at,error,lease_until,retry_at FROM chatgpt_conversations WHERE scope=? ORDER BY title,id`, scope)
 		if err == nil {
 			defer result.Close()
 			for result.Next() {
@@ -216,8 +238,8 @@ func RegisterChatGPTHandlers(router *gin.Engine, db *sqlx.DB, root string) error
 				}
 				_, err = tx.Exec(`INSERT INTO chatgpt_conversations(scope,id,title,project_id,url,remote_updated_at) VALUES(?,?,?,?,?,?)
 ON CONFLICT(scope,id) DO UPDATE SET title=excluded.title,project_id=excluded.project_id,url=excluded.url,
-generation=CASE WHEN title!=excluded.title OR project_id!=excluded.project_id OR (excluded.remote_updated_at!='' AND remote_updated_at!=excluded.remote_updated_at) THEN generation+1 ELSE generation END,
-remote_updated_at=CASE WHEN excluded.remote_updated_at='' THEN remote_updated_at ELSE excluded.remote_updated_at END`, input.Scope, item.ID, item.Title, item.ProjectID, url, item.UpdatedAt)
+generation=CASE WHEN title!=excluded.title OR project_id!=excluded.project_id OR (excluded.remote_updated_at!='' AND (remote_updated_at='' OR COALESCE(julianday(excluded.remote_updated_at),excluded.remote_updated_at)>COALESCE(julianday(remote_updated_at),remote_updated_at))) THEN generation+1 ELSE generation END,
+remote_updated_at=CASE WHEN excluded.remote_updated_at!='' AND (remote_updated_at='' OR COALESCE(julianday(excluded.remote_updated_at),excluded.remote_updated_at)>COALESCE(julianday(remote_updated_at),remote_updated_at)) THEN excluded.remote_updated_at ELSE remote_updated_at END`, input.Scope, item.ID, item.Title, item.ProjectID, url, item.UpdatedAt)
 				if err != nil {
 					fail(err)
 					return
@@ -238,7 +260,7 @@ remote_updated_at=CASE WHEN excluded.remote_updated_at='' THEN remote_updated_at
 			}
 			lease := hex.EncodeToString(token)
 			row := map[string]interface{}{}
-			result := tx.QueryRowx(`UPDATE chatgpt_conversations SET lease=?,lease_until=?,leased_generation=generation WHERE rowid=(SELECT rowid FROM chatgpt_conversations WHERE scope=? AND generation>saved_generation AND retry_at<=? AND lease_until<=? ORDER BY retry_at,saved_at,id LIMIT 1) RETURNING id,title,project_id,url,generation`, lease, now+120, input.Scope, now, now)
+			result := tx.QueryRowx(`UPDATE chatgpt_conversations SET lease=?,lease_until=?,leased_generation=generation WHERE rowid=(SELECT rowid FROM chatgpt_conversations WHERE scope=? AND generation>saved_generation AND retry_at<=? AND (retry_at>=0 OR -retry_at<generation) AND lease_until<=? ORDER BY retry_at,saved_at,id LIMIT 1) RETURNING id,title,project_id,url,generation`, lease, now+120, input.Scope, now, now)
 			if err = result.MapScan(row); err == sql.ErrNoRows {
 				c.JSON(200, gin.H{"job": nil})
 				return
@@ -324,9 +346,17 @@ remote_updated_at=CASE WHEN excluded.remote_updated_at='' THEN remote_updated_at
 				_, err = tx.Exec(`UPDATE chatgpt_conversations SET generation=CASE WHEN generation=leased_generation THEN generation+1 ELSE generation END,lease='',lease_until=0,retry_at=?,error=? WHERE scope=? AND id=?`, now+60, input.Error[:min(len(input.Error), 1024)], input.Scope, input.ID)
 			} else if c.Param("action") == "yield" {
 				_, err = tx.Exec(`UPDATE chatgpt_conversations SET lease='',lease_until=0,retry_at=0,error='' WHERE scope=? AND id=?`, input.Scope, input.ID)
+			} else if c.Param("action") == "fail" && strings.Contains(input.Error, "ChatGPT conversation returned HTTP 404.") && strings.Contains(input.Error, "error=conversation_deleted") {
+				err = chatGPTDelete(tx, root, input.Scope, input.ID)
 			} else if c.Param("action") == "fail" {
-				log.Printf("chatgpt_backup retry scope=%q conversation_id=%q retry_seconds=%d error=%q", input.Scope, input.ID, max(60, min(3600, input.RetrySeconds)), input.Error[:min(len(input.Error), 1024)])
-				_, err = tx.Exec(`UPDATE chatgpt_conversations SET lease='',lease_until=0,retry_at=?,error=? WHERE scope=? AND id=?`, now+max(60, min(3600, input.RetrySeconds)), input.Error[:min(len(input.Error), 1024)], input.Scope, input.ID)
+				retryAt := now + max(60, min(3600, input.RetrySeconds))
+				if strings.Contains(input.Error, "ChatGPT conversation returned HTTP 404.") || strings.Contains(input.Error, "error=conversation_deleted") {
+					// Negative retry_at parks the failed generation without marking it saved.
+					// Discovery can advance generation while this lease is still in flight.
+					retryAt = -claimedGeneration
+				}
+				log.Printf("chatgpt_backup retry scope=%q conversation_id=%q parked=%t retry_at=%d error=%q", input.Scope, input.ID, retryAt < 0, retryAt, input.Error[:min(len(input.Error), 1024)])
+				_, err = tx.Exec(`UPDATE chatgpt_conversations SET lease='',lease_until=0,retry_at=?,error=? WHERE scope=? AND id=?`, retryAt, input.Error[:min(len(input.Error), 1024)], input.Scope, input.ID)
 			} else {
 				if input.Generation < 1 || input.Generation > generation || input.Generation != claimedGeneration {
 					c.JSON(400, gin.H{"error": "invalid job generation"})
@@ -391,6 +421,29 @@ remote_updated_at=CASE WHEN excluded.remote_updated_at='' THEN remote_updated_at
 		}
 		c.JSON(200, gin.H{"ok": true})
 	})
+	return nil
+}
+
+// Source removal is picked up by ordinary archive reconciliation, including
+// lexical and vector index entries. Retain the queue row if file removal fails.
+func chatGPTDelete(tx *sqlx.Tx, root, scope, id string) error {
+	if !chatGPTID.MatchString(scope) || !chatGPTID.MatchString(id) {
+		return fmt.Errorf("invalid conversation identity")
+	}
+	dir := filepath.Join(root, scope, "conversations", id)
+	if err := chatGPTDirectory(dir); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM chatgpt_pages WHERE scope=? AND id=?`, scope, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM chatgpt_conversations WHERE scope=? AND id=?`, scope, id); err != nil {
+		return err
+	}
+	log.Printf("chatgpt_backup deleted scope=%q conversation_id=%q", scope, id)
 	return nil
 }
 
