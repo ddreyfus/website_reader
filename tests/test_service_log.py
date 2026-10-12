@@ -8,6 +8,8 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
+import itertools
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/service-log.py'
 spec = importlib.util.spec_from_file_location('service_log', SCRIPT)
@@ -16,6 +18,22 @@ spec.loader.exec_module(service_log)
 
 
 class ServiceLogTests(unittest.TestCase):
+    def test_watchdog_restarts_after_sustained_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'service.log'
+            ticks = itertools.count(0, 100)
+            with patch.object(service_log.time, 'monotonic', side_effect=lambda: next(ticks)), patch.object(service_log, 'check_tunnel', side_effect=RuntimeError('not ready')) as probe:
+                service_log.run(path, [sys.executable, '-u', '-c', 'import time; time.sleep(60)', '--health.url-file', 'fixture'])
+            self.assertEqual(probe.call_count, 3)
+            self.assertIn('sustained tunnel failure', path.read_text())
+
+    def test_probe_rejects_remote_health_url(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'health.url'
+            path.write_text('http://example.com')
+            with self.assertRaises(ValueError):
+                service_log.check_tunnel(path)
+
     def test_daily_size_rotation_retention_and_continued_writes(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'service.log'

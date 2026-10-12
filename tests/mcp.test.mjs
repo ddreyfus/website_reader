@@ -7,18 +7,23 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { z } from "zod";
 
 test("local MCP discovers and calls hello over stdio", { timeout: 10000 }, async () => {
   const client = new Client({ name: "website-reader-smoke-test", version: "0.1.0" });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [fileURLToPath(new URL("../scripts/mcp-archive.mjs", import.meta.url))],
+    stderr: "pipe",
+  });
+  let logs = "";
+  const challenge = crypto.randomUUID();
+  transport.stderr.on("data", chunk => { logs += chunk; });
   try {
-    await client.connect(new StdioClientTransport({
-      command: process.execPath,
-      args: [fileURLToPath(new URL("../scripts/mcp-archive.mjs", import.meta.url))],
-    }));
+    await client.connect(transport);
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map(tool => tool.name).sort(), ["hello", "list_articles", "list_corpora", "list_documents", "read_document", "search_archive"]);
     assert.ok(tools.every(tool => tool.annotations.readOnlyHint));
-    const challenge = crypto.randomUUID();
     const started = Date.now();
     const result = await client.callTool({ name: "hello", arguments: { challenge } });
     assert.ok(!result.isError);
@@ -27,9 +32,21 @@ test("local MCP discovers and calls hello over stdio", { timeout: 10000 }, async
     assert.equal(response.challenge, challenge);
     assert.ok(Date.parse(response.time) >= started);
     assert.ok(Date.parse(response.time) <= Date.now());
+    assert.equal((await client.callTool({ name: "missing-tool", arguments: {} })).isError, true);
+    await assert.rejects(client.request({ method: "missing-method" }, z.any()));
   } finally {
     await client.close();
   }
+  const events = logs.trim().split("\n").map(line => JSON.parse(line));
+  assert.ok(events.some(event => event.method === "initialize" && event.event === "receive"));
+  assert.ok(events.some(event => event.method === "notifications/initialized" && event.initialization === "initialized_notification_received"));
+  const received = events.find(event => event.event === "receive" && event.tool === "hello");
+  const sent = events.find(event => event.event === "response" && event.request_id === received.request_id);
+  assert.equal(sent.outcome, "ok");
+  assert.ok(sent.duration_ms >= 0);
+  assert.ok(events.some(event => event.outcome === "rpc_error" && typeof event.error_code === "number"));
+  assert.ok(events.some(event => event.outcome === "tool_error"));
+  assert.ok(!logs.includes(challenge));
 });
 
 test("archive MCP discovers corpora, forwards scopes, reads context, and reports errors", { timeout: 15000 }, async () => {

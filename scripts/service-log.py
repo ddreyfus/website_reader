@@ -10,6 +10,19 @@ import subprocess
 import sys
 import time
 import traceback
+import urllib.request
+import urllib.parse
+
+
+def check_tunnel(url_file):
+    base = Path(url_file).read_text().strip()
+    url = urllib.parse.urlsplit(base)
+    if url.scheme != 'http' or url.hostname != '127.0.0.1':
+        raise ValueError('Expected loopback tunnel health URL')
+    for endpoint in ('/healthz', '/readyz'):
+        with urllib.request.urlopen(base.rstrip('/') + endpoint, timeout=3) as response:
+            if response.status != 200:
+                raise RuntimeError(f'{endpoint}: HTTP {response.status}')
 
 
 def rotate_log(path, now, max_bytes=25 * 1024 * 1024, keep_days=14, max_files=56):
@@ -49,17 +62,40 @@ def run(path, command):
     if path.exists():
         path.chmod(0o600)
     rotate_log(path, time.time())
-    child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+    health_file = command[command.index('--health.url-file') + 1] if '--health.url-file' in command else None
+    child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0, start_new_session=True)
+    next_check = time.monotonic() + 90
+    failures = 0
     append_log(path, f'{datetime.datetime.now(datetime.timezone.utc).isoformat()} supervisor started child_pid={child.pid} executable={command[0]}\n'.encode())
     def forward(signum, _frame):
         if child.poll() is None:
-            child.send_signal(signum)
+            os.killpg(child.pid, signum)
+    stopping = False
+    def stop(signum, frame):
+        nonlocal stopping
+        stopping = True
+        forward(signum, frame)
     for signum in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(signum, forward)
+        signal.signal(signum, stop)
     selector = selectors.DefaultSelector()
     selector.register(child.stdout, selectors.EVENT_READ)
     try:
         while True:
+            if stopping:
+                break
+            if health_file and time.monotonic() >= next_check:
+                try:
+                    check_tunnel(health_file)
+                    if failures:
+                        append_log(path, b'watchdog: tunnel health and readiness recovered\n')
+                    failures = 0
+                except Exception as error:
+                    failures += 1
+                    append_log(path, f'{datetime.datetime.now(datetime.timezone.utc).isoformat()} watchdog: probe failed {failures}/3: {error}\n'.encode())
+                    if failures >= 3:
+                        append_log(path, b'watchdog: sustained tunnel failure; terminating process group for launchd restart\n')
+                        break
+                next_check = time.monotonic() + 30
             # Check before each write and during idle periods. Open per chunk so
             # no service-owned descriptor continues writing into a rotated file.
             if not selector.select(timeout=1):
@@ -73,11 +109,14 @@ def run(path, command):
         selector.close()
         child.stdout.close()
         if child.poll() is None:
-            child.terminate()
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
         try:
             child.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            child.kill()
+            os.killpg(child.pid, signal.SIGKILL)
             child.wait()
         append_log(path, f'{datetime.datetime.now(datetime.timezone.utc).isoformat()} supervisor stopped child_pid={child.pid} exit_code={child.returncode}\n'.encode())
     return child.returncode

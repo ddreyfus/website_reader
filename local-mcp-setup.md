@@ -194,12 +194,16 @@ reachability by itself: verify a fresh plugin `hello` and an archive search.
 In-flight requests can fail during a restart; retry with a fresh call after
 readiness returns. A local health check alone cannot establish remote reachability.
 
-Availability still requires the Mac to be awake, logged in, and online, with a
-valid tunnel credential. launchd does not repair a revoked key, upstream 429s,
-or a living but wedged client. Use health/readiness and end-to-end calls to detect
-those cases; restart the client for a local fault and inspect errors before
-retrying upstream failures. This setup does not change power settings or add a
-periodic health watchdog. `.local-mcp/` remains ignored by Git.
+The service log supervisor checks the tunnel's loopback health and readiness
+every 30 seconds after a 90-second startup grace period. Three consecutive
+failures terminate the tunnel process group for launchd to restart it. Probe
+failures, recovery, and restart decisions are recorded in `.local-mcp/tunnel.log`.
+Shutdown has a ten-second deadline before forced termination. A deliberate
+`mcp:stop` still unloads the supervisor and prevents recovery until started again.
+These probes detect local failures; they do not prove remote connector initialization
+or successful archive retrieval. Availability still requires the Mac to be awake,
+logged in, online, and using a valid credential. Restarting cannot repair revoked
+credentials or an upstream outage. `.local-mcp/` remains ignored by Git.
 
 ## Verification status
 
