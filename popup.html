@@ -69,7 +69,7 @@
       <details id="chatgpt-backup">
         <summary>ChatGPT conversation backup</summary>
         <p>Back up conversation JSON and readable text locally. Conversations download one at a time as inventory discovers them. Partial downloads resume. Alternate branches and attachment files are not included yet.</p>
-        <p>Enable automatic archiving and choose its folder in Local archive settings. The panel and your ChatGPT tabs can stay closed; Chrome and the local archive service must be running.</p>
+        <p>Enable automatic archiving and choose its folder in Local archive settings. Checks for changes use an open ChatGPT tab. Queued downloads can continue after you close it. Chrome and the local archive service must be running.</p>
         <p id="chatgpt-backup-cooldown" role="status"></p>
         <p id="chatgpt-backup-summary">No backup inventory loaded yet.</p>
         <p id="chatgpt-backup-status" role="status" aria-atomic="true">Configure automatic ChatGPT archiving below. Saved settings control whether it runs.</p>
@@ -119,7 +119,7 @@
             <label><input id="chatgpt-backup-enabled" name="enabled" type="checkbox"> Archive ChatGPT conversations automatically</label>
             <label for="chatgpt-backup-scope">Account and workspace label</label>
             <input id="chatgpt-backup-scope" name="scope" type="text" pattern="[A-Za-z0-9_\-]{1,128}" maxlength="128" placeholder="personal" required aria-describedby="chatgpt-backup-help">
-            <p id="chatgpt-backup-help">Use a different label for each account/workspace. Uses your ChatGPT login in this Chrome profile. No ChatGPT tab or extension panel needs to stay open. If signed out, sign in at chatgpt.com; archiving retries automatically. To change accounts, disable archiving and save before changing the label.</p>
+            <p id="chatgpt-backup-help">Use a different label for each account/workspace. Uses your ChatGPT login in this Chrome profile. Keep a ChatGPT tab open to check for changes; queued downloads continue after it closes. The extension panel can stay closed. If signed out, sign in at chatgpt.com; archiving retries automatically. To change accounts, disable archiving and save before changing the label.</p>
             <label for="chatgpt-request-interval">Minimum request interval (seconds)</label>
             <input id="chatgpt-request-interval" name="request-interval" type="number" min="0.5" max="30" step="0.5" value="2" required aria-describedby="chatgpt-rate-help">
             <label for="chatgpt-max-backoff">Maximum retry backoff (minutes)</label>

@@ -2,7 +2,7 @@
 
 UI cleanup: the ChatGPT action names the file it will attach and whether it is a chosen file or the latest completed collection. Refresh the panel screenshots before submission.
 
-Last updated: 2026-10-11. Local development draft; no submission requested.
+Last updated: 2026-10-12. Local development draft; no submission requested.
 
 Free Press digests collect only Free Press articles. External email links and externally redirected sources are excluded from article extraction.
 
@@ -71,6 +71,7 @@ Local unpacked installation only. Publisher, public contact, support URL, distri
 
 | Version | Date | Changes | Status |
 |---|---|---|---|
+| 0.1.0 | 2026-10-12 | Check for ChatGPT changes using an open tab, wait quietly when caught up with ChatGPT closed, and continue queued downloads after tabs close. Reduce repeated cooldown notices. Refresh backup help screenshots. | Local draft |
 | 0.1.0 | 2026-10-11 | Separate backup and export import into collapsed sections, with folder selection, processing progress, and retryable local imports. Move backup pacing and retry controls into Local archive settings. | Local draft |
 | 0.1.0 | 2026-10-09 | ChatGPT structured-page backup preview with resumable local inventory and background queue. Inventory finishes before sequential conversation downloads. Verified update ordering enables incremental early stopping after a full baseline; full reconciliation runs daily. Shows backup coverage separately from queued work and retry reasons. Failed conversations do not stop other backups. Incomplete coverage is disclosed. | Local draft |
 | 0.1.0 | 2026-10-08 | Explicit next ChatGPT file and source; accurate file-clearing control and current-page status. | Local draft |

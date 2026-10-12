@@ -206,14 +206,16 @@ load the service settings and choose the **ChatGPT archive folder**. Save and re
 the service to apply a changed folder for future saves; existing files are not moved. Under
 **ChatGPT archiving**, enter a distinct account/workspace label, check
 **Archive ChatGPT conversations automatically**, and save the backup settings.
-Chrome and the local service must be running. The extension panel and user ChatGPT
-tabs can stay closed; an inactive temporary tab uses this Chrome profile’s login
-and closes after each batch. If signed out, sign in at chatgpt.com; retries are automatic.
+Chrome and the local service must be running. Discovery checks use an open ChatGPT
+tab and reuse its page-local authentication. When caught up and no ChatGPT tab is
+open, archiving waits until one is opened. Queued downloads can continue in an
+inactive temporary tab that closes after each batch. The extension panel can stay
+closed. If signed out, sign in at chatgpt.com; retries are automatic.
 The label is bound to the observed session user/workspace identity; a mismatch
 stops the run. Tokens remain in the ChatGPT page and are never sent to the local
 service. Disabling archiving retains saved files, partial pages, and queued work.
 
-One inactive owned tab runs two sequential activities:
+An existing ChatGPT tab, or a temporary tab for queued downloads, runs two sequential activities:
 
 1. **Inventory:** enumerate recent and archived conversation lists. Reuse the
    scoped projects table for names; refresh project metadata only when a listed
@@ -241,10 +243,11 @@ The streak resets after successful backend requests at least five minutes beyond
 the last cooldown. The panel shows the next retry time. Settings changes
 do not shorten an active cooldown.
 
-Enabled backup requests inventory checks every five minutes, including when all
-user ChatGPT tabs are closed. Alarms resume unfinished inventory or conversation pages every
-30 seconds. Switching active tabs or closing the panel does not change the fetch
-target. Jobs use recoverable leases; failed conversations back off while other
+Enabled backup requests inventory checks every five minutes while a loaded ChatGPT
+tab is open. Alarms check local work every 30 seconds and resume conversation pages
+even when user ChatGPT tabs are closed. Idle runs make no ChatGPT requests. Existing
+tabs are never closed by archiving, and repeated identical status messages are logged
+once. Jobs use recoverable leases; failed conversations back off while other
 eligible conversations can proceed. HTTP 429 pauses all backup requests for the shared cooldown.
 Remote update timestamps drive requeueing; conversations lacking timestamps use
 a daily age-based recheck. An unchanged observation creates no new job.

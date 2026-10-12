@@ -259,3 +259,11 @@ Do not equate visible sidebar discovery with a complete or current backup.
 - Removed the manual Sync and Pause buttons. Configuration now controls automatic archiving and the account/workspace label. Existing enabled state is retained.
 - Periodic discovery and downloads no longer require a user ChatGPT tab; the worker opens and closes its own inactive tab using the browser login. The extension panel can stay closed.
 - Added validated `chatgpt_root` to the existing service configuration and extension settings. The previous path remains the default for existing archives; changing it requires a service restart and does not move existing snapshots.
+
+### 2026-10-12 — Avoid idle ChatGPT traffic
+
+- Check the local queue before contacting ChatGPT. Automatic discovery waits for a loaded user ChatGPT tab; caught-up runs with no tab make no ChatGPT requests.
+- Borrow existing tabs without closing them and reuse page-local authentication across batches. Open temporary tabs only for eligible queued downloads or an explicit Sync request; retain account/workspace verification and shared cooldowns.
+- Suppress repeated identical progress messages, including cooldown notices. Update backup help to describe when discovery waits.
+- Regression coverage includes idle runs, deferred and parked jobs, borrowed-tab ownership, queued-download fallback, access failures, and discovery resuming with an open tab.
+- Validation: all 72 extension regression tests and all 20 focused archiver tests passed; updated panel help was visually checked.

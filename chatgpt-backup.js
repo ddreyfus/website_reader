@@ -1,9 +1,9 @@
-// Authenticated reads stay in the owned ChatGPT page. Tokens never leave it.
+// Authenticated reads stay in the ChatGPT page. Tokens never leave it.
 async function chatGPTRead(kind, id = "", cursor = "", project = "", interval = 0, lastRequestAt = 0) {
   const requests = [];
   const sessionKey = Symbol.for("website-reader.chatgpt-backup.session");
   try {
-    if (location.origin !== "https://chatgpt.com") throw new Error("Waiting for the owned ChatGPT tab to load.");
+    if (location.origin !== "https://chatgpt.com") throw new Error("Waiting for the ChatGPT tab to load.");
     const get = async (path, headers = {}) => {
       const category = path === "/api/auth/session" || path.startsWith("/backend-api/accounts/") ? "authentication" : kind === "conversation" ? "download" : "inventory";
       let response;
@@ -11,7 +11,7 @@ async function chatGPTRead(kind, id = "", cursor = "", project = "", interval = 
       if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
       lastRequestAt = Date.now();
       try {
-        response = await fetch(path, { headers, credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(20000) });
+        response = await fetch(path, { headers, credentials: "same-origin", cache: "no-store", priority: "low", signal: AbortSignal.timeout(20000) });
       } catch (error) {
         requests.push([category, "network-error"]);
         throw error;
@@ -70,7 +70,7 @@ async function chatGPTRead(kind, id = "", cursor = "", project = "", interval = 
     };
     let workspace = decodeURIComponent(document.cookie.match(/(?:^|;\s*)_account=([^;]*)/)?.[1] || "");
     if (workspace.startsWith('"')) { const value = JSON.parse(workspace); if (typeof value === "string") workspace = value; }
-    // The owned tab is recreated for every batch. Reuse its session object;
+    // Reuse the page's session object across reads and backup batches;
     // credentials never enter extension storage or cross the injection boundary.
     let session = globalThis[sessionKey];
     if (!session || session.backupWorkspace !== workspace || session.backupExpiresAt <= Date.now()) {
@@ -271,16 +271,33 @@ async function chatGPTBackupRun(discover = false) {
     }
     if (!await chrome.permissions.contains({ origins: ["https://chatgpt.com/*"] })) return;
     const { chatGPTBackupTabId: orphan } = await chrome.storage.session.get("chatGPTBackupTabId");
-    let tab;
+    let tab, owned = false;
     try {
       let { checkpoint, projects } = await chatGPTArchive(`checkpoint?scope=${encodeURIComponent(scope)}`);
-      // Non-rate-limit inventory failures retain their independent retry schedule.
-      const inventoryDue = !checkpoint?.complete || discover || (settings.chatGPTBackupRequestedAt || 0) > (settings.chatGPTBackupDiscoveredAt || 0);
       if (Number.isInteger(orphan)) {
         try { const previous = await chrome.tabs.get(orphan); if (previous.url?.startsWith("https://chatgpt.com/")) await chrome.tabs.remove(orphan); } catch { /* Already gone. */ }
+        await chrome.storage.session.remove("chatGPTBackupTabId");
       }
-      tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
-      await chrome.storage.session.set({ chatGPTBackupTabId: tab.id });
+      const tabs = await chrome.tabs.query({ url: "https://chatgpt.com/*" });
+      tab = tabs.find(item => item.status === "complete" && !item.discarded);
+      // Discovery waits for an open tab; queued downloads retain their own retries.
+      const inventoryDue = (Boolean(tab) || discover) && (!checkpoint?.complete || discover || (settings.chatGPTBackupRequestedAt || 0) > (settings.chatGPTBackupDiscoveredAt || 0)) && !(settings.chatGPTInventoryRetryAt > Date.now());
+      if (!inventoryDue) {
+        const status = await chatGPTArchive(`status?scope=${encodeURIComponent(scope)}`);
+        const now = Date.now() / 1000;
+        if (!checkpoint?.identity || !status.conversations.some(item => item.generation > item.saved_generation && item.retry_at <= now && (item.retry_at >= 0 || -item.retry_at < item.generation) && item.lease_until <= now)) {
+          await chatGPTBackupCounts(scope, status);
+          await chatGPTBackupProgress(tab ? "Idle: no conversation download is ready." : "Idle: waiting for an open ChatGPT tab to check for changes.");
+          return;
+        }
+      }
+      // A loading/discarded user tab should not cause a duplicate page load.
+      if (!tab && tabs.length) return;
+      if (!tab) {
+        tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
+        owned = true;
+        await chrome.storage.session.set({ chatGPTBackupTabId: tab.id });
+      }
       // A fresh tab can still be about:blank when the first injection runs.
       let ready = false;
       for (let attempt = 0; attempt < 20; attempt++) {
@@ -289,8 +306,8 @@ async function chatGPTBackupRun(discover = false) {
         if (current.status === "complete" && current.url?.startsWith("https://chatgpt.com/")) { ready = true; break; }
         await new Promise(resolve => setTimeout(resolve, 500));
       }
-      if (!ready) throw new Error("Owned ChatGPT tab did not finish loading; retrying later.");
-      if (inventoryDue && !(settings.chatGPTInventoryRetryAt > Date.now())) {
+      if (!ready) throw new Error("ChatGPT tab did not finish loading; retrying later.");
+      if (inventoryDue) {
         try {
           if (await chatGPTInventory(tab.id, scope, checkpoint, projects)) {
             await chrome.storage.local.set({ chatGPTBackupDiscoveredAt: settings.chatGPTBackupRequestedAt || Date.now(), chatGPTInventoryRetryAt: 0 });
@@ -305,7 +322,7 @@ async function chatGPTBackupRun(discover = false) {
       if (!checkpoint?.identity) return;
       if (settings.chatGPTBackupRetryAt > Date.now() || !await chatGPTBackupActive(scope)) return;
       await chatGPTReadPage(tab.id, checkpoint.identity, "identity");
-      // Reuse the owned tab and authenticated session across sequential jobs.
+      // Reuse the tab and authenticated session across sequential jobs.
       // Bound each batch so alarms can recover suspension and inventory can run.
       const deadline = Date.now() + 60000;
       for (let conversation = 0; conversation < 10 && Date.now() < deadline; conversation++) {
@@ -348,7 +365,7 @@ async function chatGPTBackupRun(discover = false) {
       if (error.status === 429) await chatGPTBackupRateLimit(error);
       await chatGPTBackupProgress(`Backup access paused: ${error.message || String(error)}`);
     } finally {
-      if (tab) { await chrome.storage.session.remove("chatGPTBackupTabId"); try { await chrome.tabs.remove(tab.id); } catch { /* Already closed. */ } }
+      if (owned && tab) { await chrome.storage.session.remove("chatGPTBackupTabId"); try { await chrome.tabs.remove(tab.id); } catch { /* Already closed. */ } }
     }
   });
 }
@@ -367,7 +384,8 @@ async function chatGPTArchive(action, body) {
 }
 
 async function chatGPTBackupProgress(message) {
-  const { chatGPTBackupLog = "", chatGPTBackupScope } = await chrome.storage.local.get(["chatGPTBackupLog", "chatGPTBackupScope"]);
+  const { chatGPTBackupLog = "", chatGPTBackupScope, chatGPTBackupProgress: previous } = await chrome.storage.local.get(["chatGPTBackupLog", "chatGPTBackupScope", "chatGPTBackupProgress"]);
+  if (message === previous) return;
   const line = `${new Date().toISOString()} ${message}`;
   await chrome.storage.local.set({ chatGPTBackupProgress: message, chatGPTBackupUpdatedAt: Date.now(), chatGPTBackupLog: [...chatGPTBackupLog.split("\n"), line].slice(-200).join("\n") });
   if (chatGPTBackupScope) {
@@ -375,8 +393,8 @@ async function chatGPTBackupProgress(message) {
   }
 }
 
-async function chatGPTBackupCounts(scope) {
-  const status = await chatGPTArchive(`status?scope=${encodeURIComponent(scope)}`);
+async function chatGPTBackupCounts(scope, status) {
+  status ??= await chatGPTArchive(`status?scope=${encodeURIComponent(scope)}`);
   const saved = status.conversations.filter(item => item.saved_at).length;
   let first = 0, refresh = 0, fetching = 0, retry = 0, parked = 0;
   for (const item of status.conversations) {
@@ -425,6 +443,11 @@ async function chatGPTBackupAutoRequest(tab) {
   const settings = await chrome.storage.local.get(["chatGPTBackupEnabled", "chatGPTBackupRequestedAt", "chatGPTBackupDiscoveredAt"]);
   if (!settings.chatGPTBackupEnabled) return false;
   const { chatGPTBackupTabId } = await chrome.storage.session.get("chatGPTBackupTabId");
+  if (!tab) {
+    const tabs = await chrome.tabs.query({ url: "https://chatgpt.com/*" });
+    tab = tabs.find(item => item.id !== chatGPTBackupTabId && item.status === "complete" && !item.discarded);
+    if (!tab) return false;
+  }
   if (tab && (tab.id === chatGPTBackupTabId || !tab.url?.startsWith("https://chatgpt.com/"))) return false;
   // Persist the request before attempting the lock so a busy/suspended worker
   // leaves it for the next alarm. Coalesce navigation and periodic checks.

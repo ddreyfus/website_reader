@@ -407,7 +407,7 @@ test('worker resumes pages on the same tab and shares rate-limit cooldown across
   const local = { chatGPTBackupEnabled: true, chatGPTBackupScope: 'scope' }, session = {}, actions = [], reads = [];
   let downloaded = false, claims = 0, locked = false;
   const context = vm.createContext({ URL, AbortSignal, setTimeout: fn => fn(), navigator: { locks: { async request(name, options, fn) { assert.equal(name, "chatgpt-backup"); assert.equal(options.ifAvailable, true); if (locked) return fn(null); locked = true; try { await fn({}); } finally { locked = false; } } } }, chrome: {
-    tabs: { onUpdated: events, async query() { assert.fail('Backup must not require an existing ChatGPT tab'); }, async create(options) { assert.equal(options.active, false); return { id: 20 }; }, async get() { return { status: 'complete', url: 'https://chatgpt.com/' }; }, async remove() {} },
+    tabs: { onUpdated: events, async query() { return [{ id: 20, status: 'complete', url: 'https://chatgpt.com/' }]; }, async create() { assert.fail('Reuse the existing tab'); }, async get() { return { status: 'complete', url: 'https://chatgpt.com/' }; }, async remove() { assert.fail('Do not close the user tab'); } },
     alarms: { onAlarm: events }, permissions: { async contains() { return true; } },
     storage: { local: { async get() { return local; }, async set(data) { Object.assign(local, data); } }, session: { async get() { return session; }, async set(data) { Object.assign(session, data); }, async remove(key) { delete session[key]; } } }
   } });
@@ -416,6 +416,7 @@ test('worker resumes pages on the same tab and shares rate-limit cooldown across
   context.chatGPTReadPage = async (tab, identity, kind, id, cursor) => { assert.equal(tab, 20); reads.push([kind, cursor || ""]); return { identity: 'user:personal', data: { fixture: true } }; };
   context.chatGPTArchive = async (action, body) => {
     actions.push(action);
+    if (action.startsWith('status?')) return { conversations: [{ generation: 1, saved_generation: 0, retry_at: 0, lease_until: 0 }] };
     if (action.startsWith('checkpoint?')) return { checkpoint: { identity: 'user:personal', complete: true } };
     if (action === 'claim') { if (claims === 2) return { job: null }; claims++; downloaded = false; return { job: { id: `chat-${claims}`, title: 'Chat', generation: 1, lease: 'lease' } }; }
     if (action === 'pages') return { cursor: 'older', pages: downloaded ? 2 : 1, complete: downloaded };
@@ -468,6 +469,7 @@ test('worker resumes pages on the same tab and shares rate-limit cooldown across
   let limitedClaims = 0;
   context.chatGPTArchive = async action => {
     if (action.startsWith('checkpoint?')) return { checkpoint: { identity: 'user:personal', complete: true } };
+    if (action.startsWith('status?')) return { conversations: [{ generation: 1, saved_generation: 0, retry_at: 0, lease_until: 0 }] };
     if (action === 'claim') { limitedClaims++; return { job: { id: 'limited', generation: 1, lease: 'lease' } }; }
     if (action === 'pages') return { pages: 0, cursor: '', complete: false };
     return {};
@@ -485,6 +487,72 @@ test('worker resumes pages on the same tab and shares rate-limit cooldown across
   context.chatGPTInventory = async () => false;
   await context.chatGPTBackupRun();
   assert.equal(claims, 2);
+});
+
+test('idle runs avoid ChatGPT, existing tabs are borrowed, and only ready downloads open temporary tabs', async () => {
+  const local = { chatGPTBackupEnabled: true, chatGPTBackupScope: 'scope', chatGPTBackupRequestedAt: 2, chatGPTBackupDiscoveredAt: 1 }, session = {};
+  let tabs = [], conversations = [], inventory = 0, created = 0, removed = 0, reads = 0;
+  const context = vm.createContext({ URL, AbortSignal, navigator: { locks: { async request(name, options, run) { await run({}); } } }, chrome: {
+    tabs: { onUpdated: events, async query() { return tabs; }, async create() { created++; return { id: 30 }; }, async get() { return { status: 'complete', url: 'https://chatgpt.com/' }; }, async remove(id) { assert.equal(id, 30); removed++; } },
+    alarms: { onAlarm: events }, permissions: { async contains() { return true; } },
+    storage: { local: { async get() { return local; }, async set(data) { Object.assign(local, data); } }, session: { async get() { return session; }, async set(data) { Object.assign(session, data); }, async remove(key) { delete session[key]; } } }
+  } });
+  vm.runInContext(source, context);
+  context.chatGPTArchive = async action => {
+    if (action.startsWith('checkpoint?')) return { checkpoint: { identity: 'user:personal', complete: true } };
+    if (action.startsWith('status?')) return { conversations, root: '/archive', inventory_complete: true };
+    if (action === 'claim') return { job: null };
+    return {};
+  };
+  context.chatGPTInventory = async () => { inventory++; return true; };
+  context.chatGPTReadPage = async () => { reads++; return { identity: 'user:personal' }; };
+  // Even pending discovery must wait when caught up and no ChatGPT tab is open.
+  await context.chatGPTBackupRun();
+  await context.chatGPTBackupRun();
+  assert.equal(created, 0);
+  assert.equal(reads, 0);
+  assert.equal(inventory, 0);
+  assert.equal(local.chatGPTBackupLog.split('\n').filter(Boolean).length, 1);
+  const pending = { generation: 2, saved_generation: 1, retry_at: 0, lease_until: 0 };
+  conversations = [
+    { ...pending, saved_generation: 2 },
+    { ...pending, retry_at: Date.now() / 1000 + 120 },
+    { ...pending, lease_until: Date.now() / 1000 + 120 },
+    { ...pending, retry_at: -2 }
+  ];
+  await context.chatGPTBackupRun();
+  assert.equal(created, 0);
+  conversations.push(pending);
+  await context.chatGPTBackupRun();
+  assert.equal(created, 1);
+  assert.equal(removed, 1);
+  assert.equal(reads, 1);
+  assert.equal(inventory, 0);
+  assert.equal(session.chatGPTBackupTabId, undefined);
+  tabs = [{ id: 10, status: 'complete', url: 'https://chatgpt.com/c/chat' }];
+  await context.chatGPTBackupRun();
+  assert.equal(inventory, 1);
+  assert.equal(created, 1);
+  assert.equal(removed, 1);
+  assert.equal(session.chatGPTBackupTabId, undefined);
+  // Once caught up, the existing tab also needs no authentication between scans.
+  conversations = [];
+  const priorReads = reads;
+  await context.chatGPTBackupRun();
+  assert.equal(reads, priorReads);
+  assert.equal(inventory, 1);
+  // Loading/discarded pages are never reloaded or replaced for background work.
+  conversations = [pending];
+  tabs[0].discarded = true;
+  await context.chatGPTBackupRun();
+  assert.equal(created, 1);
+  assert.equal(reads, priorReads);
+  // Access failures on a borrowed tab must leave it open.
+  tabs[0].discarded = false;
+  context.chatGPTReadPage = async () => { throw Object.assign(new Error('Signed out'), { status: 401 }); };
+  await context.chatGPTBackupRun();
+  assert.equal(removed, 1);
+  assert.match(local.chatGPTBackupProgress, /Signed out/);
 });
 
 test('cooldown refreshes local counts without contacting ChatGPT and survives an offline archive', async () => {
@@ -541,7 +609,7 @@ test('backup summary distinguishes durable backups from mutually exclusive queue
 test('automatic discovery persists requests, coalesces navigation, and ignores owned tabs and pause', async () => {
   const local = { chatGPTBackupEnabled: true };
   const session = { chatGPTBackupTabId: 20 };
-  let tabs = [{ id: 10, url: 'https://chatgpt.com/c/chat-a' }];
+  let tabs = [{ id: 10, status: 'complete', url: 'https://chatgpt.com/c/chat-a' }];
   let now = 1000000, runs = 0;
   const listeners = {};
   const context = vm.createContext({
@@ -568,11 +636,14 @@ test('automatic discovery persists requests, coalesces navigation, and ignores o
   now += 300001;
   await listeners.alarm({ name: 'chatgpt-backup' });
   assert.equal(local.chatGPTBackupRequestedAt, now);
-  // Periodic discovery works with no user tabs; owned-tab events remain ignored.
+  // Discovery waits for a ready user tab and leaves the request time unchanged.
   now += 300001;
   tabs = [];
-  assert.equal(await context.chatGPTBackupAutoRequest(), true);
-  assert.equal(local.chatGPTBackupRequestedAt, now);
+  const requested = local.chatGPTBackupRequestedAt;
+  assert.equal(await context.chatGPTBackupAutoRequest(), false);
+  assert.equal(local.chatGPTBackupRequestedAt, requested);
+  tabs = [{ id: 20, status: 'complete', url: 'https://chatgpt.com/' }];
+  assert.equal(await context.chatGPTBackupAutoRequest(), false);
   tabs = [{ id: 10, url: 'https://example.com/' }];
   assert.equal(await context.chatGPTBackupAutoRequest(), false);
   local.chatGPTBackupEnabled = false;
