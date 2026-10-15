@@ -86,7 +86,7 @@ func main() {
 	}()
 	go func() {
 		defer close(indexingDone)
-		routes.WatchDirectories(ctx, config.IndexDirectories, 10*time.Second)
+		routes.WatchDirectories(ctx, config.IndexDirectories, 10*time.Minute)
 	}()
 	defer func() { stop(); <-indexingDone; <-embeddingsDone }()
 	go func() {

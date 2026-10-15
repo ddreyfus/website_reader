@@ -27,7 +27,7 @@ async function archiveRequest(path, options = {}) {
     options = { ...options, body: JSON.stringify(body) };
   }
   const response = await fetch(`${base}/api/v1${path}`, { ...options, signal: AbortSignal.timeout(30000) });
-  log("archive_response", { request_id: requestContext.getStore(), status: response.status });
+  log("archive_response", { request_id: requestContext.getStore()?.request_id, call_id: requestContext.getStore()?.call_id, status: response.status });
   const data = await response.json();
   if (!response.ok) throw new Error(data.errors?.[0]?.detail || data.error || `Archive returned ${response.status}`);
   for (const result of [...(data.results || []), ...(data.documents || []), ...(data.articles || [])]) if (result.url) result.url = new URL(result.url, base).href;
@@ -100,18 +100,23 @@ server.registerTool("hello", {
 }));
 
 const transport = new StdioServerTransport();
-const pending = new Map();
+const pending = new Set();
+let callId = 0;
 let initialization = "not_received";
 transport.onmessage = message => {
   if (message.method === "initialize") initialization = "initialize_received";
   if (message.method === "notifications/initialized") initialization = "initialized_notification_received";
-  const fields = { request_id: message.id ?? null, method: message.method, tool: message.method === "tools/call" ? message.params?.name : undefined, initialization };
+  const fields = { request_id: message.id ?? null, call_id: ++callId, method: message.method, tool: message.method === "tools/call" ? message.params?.name : undefined, initialization };
   log("receive", fields);
-  if (message.id !== undefined && message.method) pending.set(message.id, { ...fields, started: performance.now() });
+  if (message.id !== undefined && message.method) {
+    Object.assign(requestContext.getStore(), fields, { started: performance.now() });
+    pending.add(requestContext.getStore());
+  }
 };
 const send = transport.send.bind(transport);
 transport.send = async (message, options) => {
-  const request = pending.get(message.id);
+  const context = requestContext.getStore();
+  const request = context?.request_id === message.id && pending.has(context) ? context : undefined;
   try {
     await send(message, options);
     if (request) {
@@ -119,17 +124,17 @@ transport.send = async (message, options) => {
       log("response", { ...fields, duration_ms: Math.round(performance.now() - started), outcome: message.error ? "rpc_error" : message.result?.isError ? "tool_error" : "ok", error_code: message.error?.code });
     }
   } catch (error) {
-    log("send_error", { request_id: message.id ?? null, error_type: error.name });
+    log("send_error", { request_id: message.id ?? null, call_id: request?.call_id, error_type: error.name });
     throw error;
   } finally {
-    if (request) pending.delete(message.id);
+    if (request) pending.delete(request);
   }
 };
 transport.onerror = error => log("transport_error", { error_type: error.name });
-transport.onclose = () => log("transport_closed", { pending_request_ids: [...pending.keys()] });
+transport.onclose = () => log("transport_closed", { pending_call_ids: [...pending].map(request => request.call_id) });
 log("started");
 await server.connect(transport);
 // Preserve the SDK's dispatcher and propagate correlation through async tool work.
 const onmessage = transport.onmessage;
-transport.onmessage = (message, extra) => requestContext.run(message.id ?? null, () => onmessage(message, extra));
-process.on("exit", code => log("exited", { code, pending_request_ids: [...pending.keys()] }));
+transport.onmessage = (message, extra) => requestContext.run({}, () => onmessage(message, extra));
+process.on("exit", code => log("exited", { code, pending_call_ids: [...pending].map(request => request.call_id) }));

@@ -69,7 +69,7 @@ does not import Downloads or move files into the archive.
 ## Automatic indexing
 
 On startup the service reconciles every configured directory. It repeats every
-10 seconds and after filesystem events, coalesced over 250 milliseconds.
+10 minutes and after filesystem events, coalesced over 250 milliseconds.
 Subdirectories are watched recursively; new subdirectories receive watches on
 the next reconciliation. The timer repairs missed events or unavailable watches.
 Additions and edits are indexed; renamed files replace old paths; removed files

@@ -37,7 +37,7 @@ test("local MCP discovers and calls hello over stdio", { timeout: 10000 }, async
   } finally {
     await client.close();
   }
-  const events = logs.trim().split("\n").map(line => JSON.parse(line));
+  const events = logs.trim().split("\n").filter(line => line.startsWith("{")).map(line => JSON.parse(line));
   assert.ok(events.some(event => event.method === "initialize" && event.event === "receive"));
   assert.ok(events.some(event => event.method === "notifications/initialized" && event.initialization === "initialized_notification_received"));
   const received = events.find(event => event.event === "receive" && event.tool === "hello");
@@ -116,4 +116,102 @@ test("archive MCP discovers corpora, forwards scopes, reads context, and reports
     await new Promise(resolve => backend.close(resolve));
     await fs.rm(temporary, { recursive: true, force: true });
   }
+});
+
+test("MCP stress: 1000 concurrent reads, repeated initialization, and overlapping IDs", { timeout: 60000 }, async t => {
+  let active = 0;
+  let peak = 0;
+  const backend = http.createServer((request, response) => {
+    active++;
+    peak = Math.max(peak, active);
+    const document = decodeURIComponent(new URL(request.url, "http://localhost").pathname.split("/").at(-1));
+    // Variable latency makes response order differ from request order.
+    setTimeout(() => {
+      active--;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ text: document }));
+    }, 100 + (Number(document.split("-").at(-1)) % 7) * 10);
+  });
+  await new Promise(resolve => backend.listen(0, "127.0.0.1", resolve));
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "archive-mcp-stress-"));
+  const config = path.join(temporary, "config.json");
+  await fs.writeFile(config, JSON.stringify({ port: backend.address().port }));
+  const transport = new StdioClientTransport({ command: process.execPath,
+    args: [fileURLToPath(new URL("../scripts/mcp-archive.mjs", import.meta.url))],
+    env: { ...process.env, LOCAL_MCP_CONFIG: config }, stderr: "pipe",
+  });
+  let logs = "";
+  transport.stderr.on("data", chunk => { logs += chunk; });
+  const responses = [];
+  let complete;
+  let reject;
+  transport.onmessage = message => {
+    responses.push(message);
+    complete?.();
+  };
+  transport.onerror = error => reject?.(error);
+  const initialize = id => ({ jsonrpc: "2.0", id, method: "initialize", params: {
+    protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "stress-test", version: "1" },
+  } });
+  const initialized = { jsonrpc: "2.0", method: "notifications/initialized" };
+  const wave = async (messages, expected) => {
+    responses.length = 0;
+    let timer;
+    const finished = new Promise((resolve, fail) => {
+      reject = fail;
+      complete = () => { if (responses.length === expected) resolve(); };
+      timer = setTimeout(() => fail(new Error(`Received ${responses.length}/${expected} responses`)), 20000);
+    });
+    try {
+      await Promise.all(messages.map(message => transport.send(message)));
+      await finished;
+    } finally {
+      clearTimeout(timer);
+      complete = undefined;
+    }
+    assert.ok(responses.every(message => !message.error && !message.result?.isError));
+  };
+  try {
+    await transport.start();
+    await wave([initialize(0)], 1);
+    await transport.send(initialized);
+    await wave(Array.from({ length: 1000 }, (_, index) => ({ jsonrpc: "2.0", id: index + 1,
+      method: "tools/call", params: { name: "read_document", arguments: { document_id: `unique-${index}` } },
+    })), 1000);
+    for (const response of responses) {
+      assert.equal(JSON.parse(response.result.content[0].text).text, `unique-${response.id - 1}`);
+    }
+    assert.ok(peak >= 100, `Expected at least 100 overlapping backend requests, observed ${peak}`);
+    // Deliberately model sessions multiplexed without request-ID remapping.
+    // This is an adversarial input, not a valid single-session ID strategy.
+    const messages = Array.from({ length: 100 }, (_, index) => [initialize(0), initialized,
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "read_document", arguments: { document_id: `duplicate-${index}` } } },
+    ]).flat();
+    await wave(messages, 200);
+    const documents = responses.filter(response => response.result?.content).map(response => JSON.parse(response.result.content[0].text).text);
+    assert.equal(new Set(documents).size, 100);
+    assert.deepEqual(documents.sort(), Array.from({ length: 100 }, (_, index) => `duplicate-${index}`).sort());
+    await wave([{ jsonrpc: "2.0", id: 2000, method: "tools/call", params: { name: "hello", arguments: {} } }], 1);
+  } finally {
+    await transport.close();
+    await new Promise(resolve => backend.close(resolve));
+    await fs.rm(temporary, { recursive: true, force: true });
+  }
+  const events = logs.trim().split("\n").filter(line => line.startsWith("{")).map(line => JSON.parse(line));
+  const reads = events.filter(event => event.event === "receive" && event.tool === "read_document");
+  const replies = events.filter(event => event.event === "response" && event.tool === "read_document");
+  assert.equal(reads.length, 1100);
+  assert.equal(replies.length, reads.length, "Every concurrent read must have a response log");
+  const byCall = new Map(replies.map(event => [event.call_id, event]));
+  assert.equal(byCall.size, reads.length);
+  for (const received of reads) {
+    const response = byCall.get(received.call_id);
+    assert.equal(response.request_id, received.request_id);
+    assert.equal(response.outcome, "ok");
+    assert.ok(response.duration_ms >= 0);
+  }
+  const backendReplies = events.filter(event => event.event === "archive_response");
+  assert.equal(backendReplies.length, reads.length);
+  assert.ok(backendReplies.every(event => byCall.has(event.call_id) && event.status === 200));
+  t.diagnostic(`1100 reads verified; peak overlapping backend requests: ${peak}`);
 });
